@@ -31,10 +31,18 @@ class GoogleCalendarAdapter:
         if not self._path:
             raise RuntimeError("GOOGLE_CALENDAR_CREDENTIALS not set")
         scopes = ["https://www.googleapis.com/auth/calendar"]
-        creds = service_account.Credentials.from_service_account_file(
-            self._path,
-            scopes=scopes,
-        )
+        # Support both a file path and a raw JSON string (for cloud deployments
+        # where mounting files isn't possible — paste the JSON as the env var value).
+        raw = self._path.strip()
+        if raw.startswith("{"):
+            info = json.loads(raw)
+            creds = service_account.Credentials.from_service_account_info(
+                info, scopes=scopes
+            )
+        else:
+            creds = service_account.Credentials.from_service_account_file(
+                raw, scopes=scopes
+            )
         if self._delegation:
             creds = creds.with_subject(self._delegation)
         self._service = build("calendar", "v3", credentials=creds, cache_discovery=False)
