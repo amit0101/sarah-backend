@@ -1,0 +1,65 @@
+services:
+  - type: web
+    name: sarah-backend
+    runtime: python
+    region: oregon
+    plan: starter
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: GHL_API_KEY
+        sync: false
+      - key: GHL_LOCATION_ID
+        sync: false
+      - key: GHL_API_BASE_URL
+        value: https://services.leadconnectorhq.com
+      - key: GHL_API_VERSION
+        value: 2021-07-28
+      - key: DEFAULT_ORGANIZATION_SLUG
+        value: mhc
+      - key: DEFAULT_ORGANIZATION_NAME
+        value: McInnis & Holloway
+      - key: DEFAULT_LOCATION_SLUG
+        value: bowness
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: GOOGLE_CALENDAR_CREDENTIALS
+        sync: false
+      - key: GOOGLE_CALENDAR_DELEGATION_EMAIL
+        sync: false
+      - key: TRIBUTE_CENTER_API_KEY
+        sync: false
+      - key: TRIBUTE_CENTER_BASE_URL
+        sync: false
+      - key: COMMS_PLATFORM_WEBHOOK_URL
+        sync: false
+      - key: COMMS_WEBHOOK_SECRET
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: WEBSITE_CRAWL_BASE_URL
+        value: https://www.mhfh.com
