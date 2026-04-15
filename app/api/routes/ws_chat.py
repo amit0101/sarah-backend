@@ -34,86 +34,95 @@ async def _run_ws_session(
 ) -> None:
     await websocket.accept()
     conv_id: uuid.UUID
-    async with async_session_factory() as db:
-        org, loc, err = await resolve_org_and_location_for_public(
-            db, org_slug=org_slug, location_slug=location_slug
-        )
-        if err or not org or not loc:
-            await websocket.send_json({"type": "error", "error": err or "invalid session"})
-            await websocket.close()
-            return
+    try:
+        async with async_session_factory() as db:
+            org, loc, err = await resolve_org_and_location_for_public(
+                db, org_slug=org_slug, location_slug=location_slug
+            )
+            if err or not org or not loc:
+                await websocket.send_json({"type": "error", "error": err or "invalid session"})
+                await websocket.close()
+                return
 
-        # Wait for first message — may be a resume request
-        first_raw = await websocket.receive_text()
-        try:
-            first_data = json.loads(first_raw)
-        except json.JSONDecodeError:
-            first_data = {"text": first_raw}
-
-        resume_id = first_data.get("resume_conversation_id")
-        first_text = first_data.get("message") or first_data.get("text") or ""
-        resumed = False
-
-        if resume_id:
-            # Section 2.15 — connection recovery: resume existing conversation
+            first_raw = await websocket.receive_text()
             try:
-                existing = await db.get(Conversation, uuid.UUID(str(resume_id)))
-                if (
-                    existing
-                    and existing.organization_id == org.id
-                    and existing.status == "active"
-                ):
-                    conv_id = existing.id
-                    resumed = True
-                    logger.info("WebSocket resumed conversation %s", conv_id)
-            except Exception:
-                pass  # Fall through to create new
+                first_data = json.loads(first_raw)
+            except json.JSONDecodeError:
+                first_data = {"text": first_raw}
 
-        if not resumed:
-            contact = Contact(
-                id=uuid.uuid4(),
-                organization_id=org.id,
-                location_id=loc.id,
-                conversation_mode="ai",
-            )
-            db.add(contact)
-            await db.flush()
-            conv = Conversation(
-                id=uuid.uuid4(),
-                organization_id=org.id,
-                contact_id=contact.id,
-                location_id=loc.id,
-                channel="webchat",
-                mode="ai",
-                status="active",
-                started_at=datetime.now(timezone.utc),
-            )
-            db.add(conv)
-            await db.commit()
-            conv_id = conv.id
+            resume_id = first_data.get("resume_conversation_id")
+            first_text = first_data.get("message") or first_data.get("text") or ""
+            resumed = False
 
-            # Section 6.1 — emit conversation.started event
-            dispatcher = WebhookDispatcher()
-            await dispatcher.emit(
-                "conversation.started",
+            if resume_id:
+                try:
+                    existing = await db.get(Conversation, uuid.UUID(str(resume_id)))
+                    if (
+                        existing
+                        and existing.organization_id == org.id
+                        and existing.status == "active"
+                    ):
+                        conv_id = existing.id
+                        resumed = True
+                        logger.info("WebSocket resumed conversation %s", conv_id)
+                except Exception:
+                    pass
+
+            if not resumed:
+                contact = Contact(
+                    id=uuid.uuid4(),
+                    organization_id=org.id,
+                    location_id=loc.id,
+                    conversation_mode="ai",
+                )
+                db.add(contact)
+                await db.flush()
+                conv = Conversation(
+                    id=uuid.uuid4(),
+                    organization_id=org.id,
+                    contact_id=contact.id,
+                    location_id=loc.id,
+                    channel="webchat",
+                    mode="ai",
+                    status="active",
+                    started_at=datetime.now(timezone.utc),
+                )
+                db.add(conv)
+                await db.commit()
+                conv_id = conv.id
+
+                dispatcher = WebhookDispatcher()
+                await dispatcher.emit(
+                    "conversation.started",
+                    {
+                        "conversation_id": str(conv.id),
+                        "organization_id": str(org.id),
+                        "location_id": loc.id,
+                        "channel": "webchat",
+                    },
+                )
+
+            await websocket.send_json(
                 {
-                    "conversation_id": str(conv.id),
+                    "type": "ready",
+                    "conversation_id": str(conv_id),
                     "organization_id": str(org.id),
+                    "organization_slug": org.slug,
                     "location_id": loc.id,
-                    "channel": "webchat",
-                },
+                    "resumed": resumed,
+                }
             )
-
-        await websocket.send_json(
-            {
-                "type": "ready",
-                "conversation_id": str(conv_id),
-                "organization_id": str(org.id),
-                "organization_slug": org.slug,
-                "location_id": loc.id,
-                "resumed": resumed,
-            }
-        )
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected during handshake (org=%s)", org_slug)
+        return
+    except Exception:
+        logger.exception("WebSocket handshake failed (org=%s)", org_slug)
+        try:
+            await websocket.send_json({"type": "error", "error": "Failed to start session. Please try again."})
+            await websocket.close()
+        except Exception:
+            pass
+        return
 
     # Process real messages (including first_text if it wasn't a resume-only message)
     pending_text = first_text if first_text else None

@@ -41,4 +41,5 @@ class Message(Base):
     conversation: Mapped["Conversation"] = relationship(
         "Conversation",
         back_populates="messages",
+        lazy="noload",
     )

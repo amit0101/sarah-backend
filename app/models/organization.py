@@ -51,4 +51,5 @@ class Organization(Base):
         "Location",
         back_populates="organization",
         cascade="all, delete-orphan",
+        lazy="noload",
     )

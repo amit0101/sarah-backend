@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -59,12 +60,19 @@ async def post_message(body: ChatMessageIn, db: DbSession) -> ChatMessageOut:
         db.add(conv)
         await db.flush()
         conv_id = conv.id
-    reply, responded = await svc.process_user_message(
-        conversation_id=conv_id,
-        user_text=body.message,
-        channel="webchat",
-    )
-    await db.commit()
+    try:
+        reply, responded = await svc.process_user_message(
+            conversation_id=conv_id,
+            user_text=body.message,
+            channel="webchat",
+        )
+        await db.commit()
+    except Exception:
+        logging.getLogger(__name__).exception("REST chat turn failed conv=%s", conv_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Sorry, something went wrong processing your message.",
+        )
     return ChatMessageOut(conversation_id=conv_id, reply=reply, responded=responded)
 
 

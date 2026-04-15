@@ -75,11 +75,12 @@ class Conversation(Base):
         nullable=True,
     )
 
-    contact: Mapped["Contact"] = relationship("Contact", back_populates="conversations")
+    contact: Mapped["Contact"] = relationship("Contact", back_populates="conversations", lazy="noload")
     messages: Mapped[List["Message"]] = relationship(
         "Message",
         back_populates="conversation",
         primaryjoin="Conversation.id == Message.conversation_id",
         foreign_keys="Message.conversation_id",
         order_by="Message.created_at",
+        lazy="noload",
     )

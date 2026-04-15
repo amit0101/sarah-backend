@@ -54,4 +54,5 @@ class Contact(Base):
     conversations: Mapped[List["Conversation"]] = relationship(
         "Conversation",
         back_populates="contact",
+        lazy="noload",
     )

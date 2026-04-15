@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 class Location(Base):
     """
     Physical or branded site within an organization.
-    Composite PK (organization_id, id) where `id` is the location slug (e.g. bowness).
+    Composite PK (organization_id, id) where `id` is the location slug (e.g. park_memorial).
     """
 
     __tablename__ = "locations"
@@ -56,4 +56,5 @@ class Location(Base):
     organization: Mapped["Organization"] = relationship(
         "Organization",
         back_populates="locations",
+        lazy="noload",
     )
