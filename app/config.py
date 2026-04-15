@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     # Fallback when SMS / webhook cannot resolve tenant (multi-org revision §7–8)
     default_organization_slug: str = "mhc"
-    default_location_slug: str = "bowness"
+    default_location_slug: str = "park_memorial"
 
     # CORS
     cors_origins: str = "*"

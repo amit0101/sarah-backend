@@ -78,8 +78,8 @@ async def test_org(db_session: AsyncSession) -> Organization:
 async def test_location(db_session: AsyncSession, test_org: Organization) -> Location:
     loc = Location(
         organization_id=test_org.id,
-        id="main_office",
-        name="Main Office",
+        id="park_memorial",
+        name="Park Memorial Chapel",
         vector_store_id="vs_test123",
         config={
             "business_hours": {

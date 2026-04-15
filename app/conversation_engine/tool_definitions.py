@@ -118,6 +118,48 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
                 "additionalProperties": False,
             },
         },
+        {
+            "type": "function",
+            "name": "resolve_postal_code",
+            "strict": True,
+            "description": (
+                "Resolve a Canadian postal code to the nearest McInnis & Holloway chapel. "
+                "Call this when the visitor provides their postal code. Returns the nearest "
+                "chapel name and slug, or an error if the postal code is invalid."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "postal_code": {
+                        "type": "string",
+                        "description": "Canadian postal code, e.g. T2P 1A1",
+                    },
+                },
+                "required": ["postal_code"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "resolve_area",
+            "strict": True,
+            "description": (
+                "Resolve a Calgary area to the nearest McInnis & Holloway chapel when "
+                "postal code is unavailable or invalid. Use after the visitor chooses an area."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "area": {
+                        "type": "string",
+                        "enum": ["south_calgary", "north_calgary", "airdrie", "cochrane"],
+                        "description": "The area the visitor selected",
+                    },
+                },
+                "required": ["area"],
+                "additionalProperties": False,
+            },
+        },
         # Section 2.5 / 4.2 — AI-driven topic switching replaces keyword detection
         {
             "type": "function",

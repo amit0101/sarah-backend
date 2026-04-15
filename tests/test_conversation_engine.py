@@ -57,7 +57,7 @@ class TestExtractText:
 
 def _make_mock_location():
     loc = MagicMock()
-    loc.id = "main_office"
+    loc.id = "park_memorial"
     loc.organization_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
     loc.vector_store_id = "vs_test123"
     loc.config = {}

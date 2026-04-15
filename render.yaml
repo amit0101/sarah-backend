@@ -28,7 +28,7 @@ services:
       - key: DEFAULT_ORGANIZATION_NAME
         value: McInnis & Holloway
       - key: DEFAULT_LOCATION_SLUG
-        value: bowness
+        value: park_memorial
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY

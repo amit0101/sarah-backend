@@ -20,3 +20,4 @@ lxml>=5.3.0
 aiofiles>=24.1.0
 python-jose[cryptography]>=3.3.0
 phonenumbers>=8.13.0
+pgeocode>=0.4.0

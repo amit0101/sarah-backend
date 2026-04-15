@@ -24,6 +24,8 @@ from app.notifications.service import NotificationService
 from app.obituary_client.client import TributeCenterClient
 from app.calendar_client.google_adapter import GoogleCalendarAdapter
 from app.services.location_config import get_pipeline_map, get_tag_map, resolve_tag_key
+from app.services.postal_code import resolve_area as _resolve_area
+from app.services.postal_code import resolve_postal_code as _resolve_postal_code
 from app.webhooks.dispatcher import WebhookDispatcher
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,10 @@ class SarahToolRunner:
             return await self._search_obituary(ctx, args)
         if name == "escalate_to_staff":
             return await self._escalate(ctx, args)
+        if name == "resolve_postal_code":
+            return await self._resolve_postal_code(ctx, args)
+        if name == "resolve_area":
+            return await self._resolve_area(ctx, args)
         if name == "switch_conversation_path":
             return await self._switch_path(ctx, args)
         return json.dumps({"ok": False, "error": f"unknown tool {name}"})
@@ -338,6 +344,41 @@ class SarahToolRunner:
             },
         )
         return json.dumps({"ok": True, "escalated": True})
+
+    async def _update_conversation_location(self, ctx: ToolContext, slug: str) -> None:
+        """Reassign conversation + contact to a new location after postal code resolution."""
+        from sqlalchemy import select
+        loc = (
+            await ctx.db.execute(
+                select(Location).where(
+                    Location.organization_id == ctx.organization.id,
+                    Location.id == slug,
+                )
+            )
+        ).scalar_one_or_none()
+        if loc:
+            ctx.conversation.location_id = loc.id
+            ctx.contact.location_id = loc.id
+            ctx.location = loc  # type: ignore[misc]
+            logger.info(
+                "Conversation %s location reassigned to %s",
+                ctx.conversation.id,
+                slug,
+            )
+
+    async def _resolve_postal_code(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
+        raw = str(args.get("postal_code", ""))
+        result = _resolve_postal_code(raw)
+        if result.get("ok"):
+            await self._update_conversation_location(ctx, result["location_slug"])
+        return json.dumps(result)
+
+    async def _resolve_area(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
+        area = str(args.get("area", ""))
+        result = _resolve_area(area)
+        if result.get("ok"):
+            await self._update_conversation_location(ctx, result["location_slug"])
+        return json.dumps(result)
 
     async def _switch_path(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
         """Section 2.5 / 4.2 — AI-driven topic switching.
