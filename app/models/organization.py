@@ -33,6 +33,10 @@ class Organization(Base):
     )  # active | suspended
     ghl_api_key: Mapped[str] = mapped_column(Text, nullable=False)
     ghl_location_id: Mapped[str] = mapped_column(Text, nullable=False)
+    vector_store_id: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+    )  # shared OpenAI Vector Store for org-wide RAG
     twilio_phone_number: Mapped[Optional[str]] = mapped_column(
         Text,
         nullable=True,

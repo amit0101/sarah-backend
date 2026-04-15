@@ -61,6 +61,7 @@ async def create_organization(body: OrganizationCreate, db: DbSession) -> dict[s
         status=body.status,
         ghl_api_key=body.ghl_api_key,
         ghl_location_id=body.ghl_location_id,
+        vector_store_id=body.vector_store_id,
         twilio_phone_number=body.twilio_phone_number,
     )
     db.add(org)
@@ -79,6 +80,7 @@ async def get_organization(org_id: uuid.UUID, db: DbSession) -> dict[str, Any]:
         "slug": org.slug,
         "status": org.status,
         "ghl_location_id": org.ghl_location_id,
+        "vector_store_id": org.vector_store_id,
         "twilio_phone_number": org.twilio_phone_number,
         "has_ghl_api_key": bool(org.ghl_api_key),
     }
@@ -127,6 +129,68 @@ async def test_ghl(org_id: uuid.UUID, db: DbSession) -> dict[str, Any]:
     except Exception as e:
         return {"ok": False, "error": str(e)}
     return {"ok": True}
+
+
+# --- Organization-level Knowledge Base ---
+
+
+@router.post("/organizations/{org_id}/knowledge-base")
+async def upload_org_kb(
+    org_id: uuid.UUID,
+    db: DbSession,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """Upload a file to the org-wide Vector Store (auto-creates if needed)."""
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "organization not found")
+    vss = VectorStoreService()
+    if not org.vector_store_id:
+        org.vector_store_id = await vss.create_vector_store(f"{org.slug}-knowledge")
+        await db.flush()
+    suffix = os.path.splitext(file.filename or "")[1] or ".txt"
+    data = await file.read()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(data)
+        path = tmp.name
+    try:
+        fid = await vss.upload_file_to_vector_store(
+            vector_store_id=org.vector_store_id,
+            file_path=path,
+            filename=file.filename or "upload",
+        )
+    finally:
+        os.unlink(path)
+    await db.commit()
+    return {"file_id": fid, "vector_store_id": org.vector_store_id}
+
+
+@router.get("/organizations/{org_id}/knowledge-base")
+async def list_org_kb_files(org_id: uuid.UUID, db: DbSession) -> dict[str, Any]:
+    """List all files in the org-wide Vector Store."""
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "organization not found")
+    if not org.vector_store_id:
+        return {"vector_store_id": None, "files": []}
+    vss = VectorStoreService()
+    files = await vss.list_files_in_store(org.vector_store_id)
+    return {"vector_store_id": org.vector_store_id, "files": files}
+
+
+@router.delete("/organizations/{org_id}/knowledge-base/{file_id}")
+async def delete_org_kb_file(
+    org_id: uuid.UUID,
+    file_id: str,
+    db: DbSession,
+) -> dict[str, str]:
+    """Remove a file from the org-wide Vector Store."""
+    org = await db.get(Organization, org_id)
+    if not org or not org.vector_store_id:
+        raise HTTPException(400, "organization or vector_store_id missing")
+    vss = VectorStoreService()
+    await vss.delete_file_from_store(org.vector_store_id, file_id)
+    return {"status": "ok"}
 
 
 # --- Locations (nested under org) ---

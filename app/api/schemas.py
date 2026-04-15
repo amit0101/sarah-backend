@@ -38,6 +38,7 @@ class OrganizationCreate(BaseModel):
     status: str = "active"
     ghl_api_key: str = Field(..., min_length=1)
     ghl_location_id: str = Field(..., min_length=1)
+    vector_store_id: Optional[str] = None
     twilio_phone_number: Optional[str] = None
 
     @field_validator("name", "slug", "ghl_api_key", "ghl_location_id", mode="before")
@@ -54,6 +55,7 @@ class OrganizationUpdate(BaseModel):
     status: Optional[str] = None
     ghl_api_key: Optional[str] = None
     ghl_location_id: Optional[str] = None
+    vector_store_id: Optional[str] = None
     twilio_phone_number: Optional[str] = None
 
 

@@ -53,7 +53,8 @@ class ConversationEngine:
             location=loc,
             path=path,
         )
-        vs = loc.vector_store_id
+        org = self._ctx.organization
+        vs = loc.vector_store_id or (org.vector_store_id if org else None)
         tools = sarah_tools(vector_store_id=vs)
 
         chain_from_db = previous_response_id
