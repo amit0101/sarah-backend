@@ -8,7 +8,9 @@ prompts are layered on top from the database.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -190,6 +192,14 @@ async def build_system_prompt(
 
     if loc_notes:
         parts.extend(["", "## Location-specific notes", str(loc_notes).strip()])
+    now = datetime.now(ZoneInfo("America/Edmonton"))
+    parts.extend([
+        "",
+        f"## Current date and time: {now.strftime('%A, %B %d, %Y at %I:%M %p')} (Calgary time, {now.strftime('%Y-%m-%d')})",
+        "Use this date when the visitor says 'today', 'tomorrow', 'next week', etc. "
+        "Always use YYYY-MM-DD format when calling check_calendar.",
+    ])
+
     if location and location.name:
         parts.extend(
             [

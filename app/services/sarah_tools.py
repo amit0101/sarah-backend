@@ -233,17 +233,37 @@ class SarahToolRunner:
         return json.dumps({"ok": True, "created": created})
 
     async def _check_calendar(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
+        from datetime import date as date_cls, datetime, timedelta
+        from zoneinfo import ZoneInfo
+
         date_str = str(args.get("date", ""))
-        tz = str(args.get("timezone", "America/Edmonton"))
+        tz_name = str(args.get("timezone", "America/Edmonton"))
         cal_id = ctx.location.availability_calendar_id or ctx.location.calendar_id
         if not cal_id:
             return json.dumps({"ok": False, "error": "no calendar configured"})
-        start_iso = f"{date_str}T00:00:00"
-        end_iso = f"{date_str}T23:59:59"
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = ZoneInfo("America/Edmonton")
+
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            dt = datetime.now(tz).date() + timedelta(days=1)
+            date_str = dt.isoformat()
+
+        if dt < datetime.now(tz).date():
+            dt = datetime.now(tz).date() + timedelta(days=1)
+            date_str = dt.isoformat()
+
+        start = datetime(dt.year, dt.month, dt.day, 0, 0, 0, tzinfo=tz)
+        end = datetime(dt.year, dt.month, dt.day, 23, 59, 59, tzinfo=tz)
+
         events = await ctx.calendar.list_events(
             cal_id,
-            time_min_iso=start_iso,
-            time_max_iso=end_iso,
+            time_min_iso=start.isoformat(),
+            time_max_iso=end.isoformat(),
         )
         result = build_availability_response(
             date_str=date_str,
