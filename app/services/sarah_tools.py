@@ -26,6 +26,7 @@ from app.calendar_client.google_adapter import GoogleCalendarAdapter
 from app.services.location_config import get_pipeline_map, get_tag_map, resolve_tag_key
 from app.services.postal_code import resolve_area as _resolve_area
 from app.services.postal_code import resolve_postal_code as _resolve_postal_code
+from app.services.scheduling import build_availability_response, parse_counselor_from_event
 from app.webhooks.dispatcher import WebhookDispatcher
 
 logger = logging.getLogger(__name__)
@@ -232,35 +233,63 @@ class SarahToolRunner:
         return json.dumps({"ok": True, "created": created})
 
     async def _check_calendar(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
-        start = str(args.get("start_iso", ""))
-        end = str(args.get("end_iso", ""))
+        date_str = str(args.get("date", ""))
         tz = str(args.get("timezone", "America/Edmonton"))
         cal_id = ctx.location.availability_calendar_id or ctx.location.calendar_id
         if not cal_id:
             return json.dumps({"ok": False, "error": "no calendar configured"})
-        busy = await ctx.calendar.free_busy(
+        start_iso = f"{date_str}T00:00:00"
+        end_iso = f"{date_str}T23:59:59"
+        events = await ctx.calendar.list_events(
             cal_id,
-            time_min_iso=start,
-            time_max_iso=end,
-            timezone=tz,
+            time_min_iso=start_iso,
+            time_max_iso=end_iso,
         )
-        return json.dumps({"ok": True, "busy": busy})
+        result = build_availability_response(
+            date_str=date_str,
+            location_slug=ctx.location.id,
+            location_name=ctx.location.name,
+            events=events,
+        )
+        return json.dumps(result)
 
     async def _book_appointment(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
         start = str(args.get("start_iso", ""))
         end = str(args.get("end_iso", ""))
-        title = str(self._opt_str(args.get("title")) or "Appointment")
+        family_name = str(self._opt_str(args.get("family_name")) or "Family")
+        counselor_name = self._opt_str(args.get("counselor_name")) or ""
+        appointment_type = str(self._opt_str(args.get("appointment_type")) or "Arrangement")
         notes = self._opt_str(args.get("notes"))
         cal_id = ctx.location.calendar_id
         if not cal_id:
             return json.dumps({"ok": False, "error": "no calendar_id"})
+
+        location_name = ctx.location.name
+        summary_parts = [appointment_type, "—", f"{family_name} Family"]
+        if counselor_name:
+            summary_parts.extend(["with", counselor_name])
+        summary_parts.extend(["at", location_name])
+        summary = " ".join(summary_parts)
+
+        desc_lines = [
+            f"Appointment Type: {appointment_type}",
+            f"Family: {family_name}",
+            f"Counselor: {counselor_name or 'TBD'}",
+            f"Location: {location_name}",
+            f"Booked by: Sarah AI",
+        ]
+        if notes:
+            desc_lines.append(f"Notes: {notes}")
+        description = "\n".join(desc_lines)
+
         ev = await ctx.calendar.create_event(
             cal_id,
             start_iso=start,
             end_iso=end,
-            summary=title,
-            description=notes,
+            summary=summary,
+            description=description,
         )
+
         ghl_cal_id = ctx.location.ghl_calendar_id
         ghl_loc = self._ghl_scope(ctx)
         cid = ctx.contact.ghl_contact_id
@@ -273,8 +302,8 @@ class SarahToolRunner:
                     contact_id=cid,
                     start_time=start,
                     end_time=end,
-                    title=title,
-                    notes=str(notes) if notes else None,
+                    title=summary,
+                    notes=description,
                 )
             except Exception as e:
                 logger.warning("GHL appointment sync failed: %s", e)
@@ -287,6 +316,8 @@ class SarahToolRunner:
                 "calendar": cal_id,
                 "start": start,
                 "location_id": ctx.location.id,
+                "counselor": counselor_name,
+                "family_name": family_name,
             },
         )
         return json.dumps({"ok": True, "event": ev})

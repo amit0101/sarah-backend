@@ -58,15 +58,26 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
             "type": "function",
             "name": "check_calendar",
             "strict": True,
-            "description": "Check appointment availability for this location in a time window.",
+            "description": (
+                "Check arrangement counselor availability for a specific date at the "
+                "visitor's location. Returns which counselors are on shift for that "
+                "location's region (North or South) and the available appointment slots "
+                "(typically 9:00 AM, 12:15 PM, 3:00 PM). Call this before offering "
+                "appointment times to the visitor."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "start_iso": {"type": "string"},
-                    "end_iso": {"type": "string"},
-                    "timezone": {"type": "string", "description": "IANA tz, e.g. America/Edmonton"},
+                    "date": {
+                        "type": "string",
+                        "description": "Date to check, YYYY-MM-DD format",
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "IANA tz, default America/Edmonton",
+                    },
                 },
-                "required": ["start_iso", "end_iso", "timezone"],
+                "required": ["date", "timezone"],
                 "additionalProperties": False,
             },
         },
@@ -74,16 +85,44 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
             "type": "function",
             "name": "book_appointment",
             "strict": True,
-            "description": "Book an appointment on Google Calendar and sync to GHL.",
+            "description": (
+                "Book an arrangement appointment on the calendar. Creates a detailed "
+                "event with the family name, assigned counselor, location, and type. "
+                "Use a counselor name returned by check_calendar."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "start_iso": {"type": "string"},
-                    "end_iso": {"type": "string"},
-                    "title": {"type": "string"},
-                    "notes": {"type": "string"},
+                    "start_iso": {
+                        "type": "string",
+                        "description": "Appointment start in ISO 8601 with timezone offset",
+                    },
+                    "end_iso": {
+                        "type": "string",
+                        "description": "Appointment end (typically 90 min after start)",
+                    },
+                    "family_name": {
+                        "type": "string",
+                        "description": "Family's last name",
+                    },
+                    "counselor_name": {
+                        "type": "string",
+                        "description": "Assigned counselor from check_calendar results",
+                    },
+                    "appointment_type": {
+                        "type": "string",
+                        "enum": ["Arrangement", "Pre-Arrangement", "After Care"],
+                        "description": "Type of appointment",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Additional details (need type, cultural affiliation, attendees)",
+                    },
                 },
-                "required": ["start_iso", "end_iso", "title", "notes"],
+                "required": [
+                    "start_iso", "end_iso", "family_name",
+                    "counselor_name", "appointment_type", "notes",
+                ],
                 "additionalProperties": False,
             },
         },
