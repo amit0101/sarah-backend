@@ -22,6 +22,7 @@ from app.database.session import DbSession
 from app.ghl_client.client import GHLAPIError
 from app.ghl_client.factory import clear_ghl_client_cache, effective_ghl_credentials, get_ghl_client_for_org
 from app.ghl_client.pipelines import list_pipelines
+from app.knowledge_base.crawler import crawl_site_to_vector_store
 from app.knowledge_base.vector_store import VectorStoreService
 from app.models.location import Location
 from app.models.organization import Organization
@@ -190,6 +191,21 @@ async def delete_org_kb_file(
     vss = VectorStoreService()
     await vss.delete_file_from_store(org.vector_store_id, file_id)
     return {"status": "ok"}
+
+
+@router.post("/organizations/{org_id}/knowledge-base/crawl")
+async def crawl_org_kb(org_id: uuid.UUID, db: DbSession) -> dict[str, Any]:
+    """Crawl the organization's public website and upload pages to the Vector Store."""
+    org = await db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "organization not found")
+    if not org.vector_store_id:
+        vss = VectorStoreService()
+        org.vector_store_id = await vss.create_vector_store(f"{org.slug}-knowledge")
+        await db.flush()
+    ids = await crawl_site_to_vector_store(vector_store_id=org.vector_store_id)
+    await db.commit()
+    return {"uploaded_file_ids": ids, "count": len(ids)}
 
 
 # --- Locations (nested under org) ---
