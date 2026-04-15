@@ -90,15 +90,28 @@ class SarahToolRunner:
         phone = self._opt_str(args.get("phone"))
         email = self._opt_str(args.get("email"))
         name = " ".join(x for x in (fn, ln) if x).strip() or None
-        contact, ghl_id = await svc.find_or_create(
-            location=ctx.location,
-            phone=phone,
-            email=email,
-            name=name,
-            first_name=fn,
-            last_name=ln,
-            source_channel=ctx.conversation.channel,
-        )
+        try:
+            contact, ghl_id = await svc.find_or_create(
+                location=ctx.location,
+                phone=phone,
+                email=email,
+                name=name,
+                first_name=fn,
+                last_name=ln,
+                source_channel=ctx.conversation.channel,
+            )
+        except Exception as e:
+            logger.error("GHL contact creation failed, saving locally: %s", e)
+            contact = ctx.contact
+            if name:
+                contact.name = name
+            if phone:
+                contact.phone = phone
+            if email:
+                contact.email = email
+            contact.location_id = ctx.location.id
+            await ctx.db.flush()
+            ghl_id = None
         ctx.conversation.contact_id = contact.id
 
         # Section 5.2 — auto-apply entry tags and location tag after contact creation

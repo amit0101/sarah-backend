@@ -92,7 +92,8 @@ async def lookup_contact(
             params=params,
         )
     except GHLAPIError as e:
-        if e.status_code == 404:
+        if e.status_code in (400, 404, 422):
+            logger.debug("GHL lookup returned %s — treating as not found", e.status_code)
             return None
         raise
     if not data:
