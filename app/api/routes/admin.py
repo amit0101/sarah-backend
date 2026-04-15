@@ -22,7 +22,6 @@ from app.database.session import DbSession
 from app.ghl_client.client import GHLAPIError
 from app.ghl_client.factory import clear_ghl_client_cache, effective_ghl_credentials, get_ghl_client_for_org
 from app.ghl_client.pipelines import list_pipelines
-from app.knowledge_base.crawler import crawl_site_to_vector_store
 from app.knowledge_base.vector_store import VectorStoreService
 from app.models.location import Location
 from app.models.organization import Organization
@@ -203,7 +202,7 @@ async def list_org_locations(org_id: uuid.UUID, db: DbSession) -> dict[str, Any]
     return {
         "organization_id": str(org_id),
         "locations": [
-            {"id": x.id, "name": x.name, "vector_store_id": x.vector_store_id} for x in rows
+            {"id": x.id, "name": x.name} for x in rows
         ],
     }
 
@@ -302,72 +301,6 @@ async def put_location_escalation(
     return {"status": "ok"}
 
 
-@router.post("/organizations/{org_id}/locations/{location_slug}/knowledge-base")
-async def upload_kb(
-    org_id: uuid.UUID,
-    location_slug: str,
-    db: DbSession,
-    file: UploadFile = File(...),
-) -> dict[str, Any]:
-    loc = await db.get(Location, (org_id, location_slug))
-    if not loc or not loc.vector_store_id:
-        raise HTTPException(400, "location or vector_store_id missing")
-    vss = VectorStoreService()
-    suffix = os.path.splitext(file.filename or "")[1] or ".txt"
-    data = await file.read()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(data)
-        path = tmp.name
-    try:
-        fid = await vss.upload_file_to_vector_store(
-            vector_store_id=loc.vector_store_id,
-            file_path=path,
-            filename=file.filename or "upload",
-        )
-    finally:
-        os.unlink(path)
-    await db.commit()
-    return {"file_id": fid}
-
-
-@router.post("/organizations/{org_id}/locations/{location_slug}/knowledge-base/crawl")
-async def crawl_kb(org_id: uuid.UUID, location_slug: str, db: DbSession) -> dict[str, Any]:
-    loc = await db.get(Location, (org_id, location_slug))
-    if not loc or not loc.vector_store_id:
-        raise HTTPException(400, "location or vector_store_id missing")
-    ids = await crawl_site_to_vector_store(vector_store_id=loc.vector_store_id)
-    return {"uploaded_file_ids": ids}
-
-
-@router.get("/organizations/{org_id}/locations/{location_slug}/knowledge-base")
-async def list_kb_files(
-    org_id: uuid.UUID,
-    location_slug: str,
-    db: DbSession,
-) -> dict[str, Any]:
-    """List all files in the location's Vector Store."""
-    loc = await db.get(Location, (org_id, location_slug))
-    if not loc or not loc.vector_store_id:
-        raise HTTPException(400, "location or vector_store_id missing")
-    vss = VectorStoreService()
-    files = await vss.list_files_in_store(loc.vector_store_id)
-    return {"vector_store_id": loc.vector_store_id, "files": files}
-
-
-@router.delete("/organizations/{org_id}/locations/{location_slug}/knowledge-base/{file_id}")
-async def delete_kb_file(
-    org_id: uuid.UUID,
-    location_slug: str,
-    file_id: str,
-    db: DbSession,
-) -> dict[str, str]:
-    """Remove a file from the location's Vector Store."""
-    loc = await db.get(Location, (org_id, location_slug))
-    if not loc or not loc.vector_store_id:
-        raise HTTPException(400, "location or vector_store_id missing")
-    vss = VectorStoreService()
-    await vss.delete_file_from_store(loc.vector_store_id, file_id)
-    return {"status": "ok"}
 
 
 @router.get("/organizations/{org_id}/prompts/{path}")

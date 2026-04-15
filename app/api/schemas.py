@@ -62,7 +62,6 @@ class OrganizationUpdate(BaseModel):
 class LocationUpdate(BaseModel):
     name: Optional[str] = None
     ghl_location_id: Optional[str] = None
-    vector_store_id: Optional[str] = None
     calendar_id: Optional[str] = None
     ghl_calendar_id: Optional[str] = None
     availability_calendar_id: Optional[str] = None
@@ -76,7 +75,6 @@ class LocationCreate(BaseModel):
     id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1)
     ghl_location_id: Optional[str] = None
-    vector_store_id: Optional[str] = None
     calendar_id: Optional[str] = None
     ghl_calendar_id: Optional[str] = None
     availability_calendar_id: Optional[str] = None
