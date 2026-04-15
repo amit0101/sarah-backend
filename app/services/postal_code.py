@@ -11,14 +11,48 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-import pgeocode
+import logging
+
+logger = logging.getLogger(__name__)
 
 _CA_POSTAL_RE = re.compile(
     r"^[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z]\s?\d[ABCEGHJ-NPRSTV-Z]\d$",
     re.IGNORECASE,
 )
 
-_nomi = pgeocode.Nominatim("CA")
+_nomi = None
+
+
+def _get_nomi():
+    """Lazy-init pgeocode Nominatim so import-time download failures don't crash the app."""
+    global _nomi
+    if _nomi is not None:
+        return _nomi
+    try:
+        import pgeocode
+        _nomi = pgeocode.Nominatim("CA")
+    except Exception as exc:
+        logger.warning("pgeocode init failed (will use FSA fallback): %s", exc)
+    return _nomi
+
+
+# Fallback: map FSA (first 3 chars) to approximate lat/lng for Calgary-area codes
+_FSA_FALLBACK: Dict[str, Tuple[float, float]] = {
+    "T1S": (50.94, -113.96), "T1X": (50.90, -113.95), "T1Y": (51.07, -113.95),
+    "T2A": (51.03, -113.97), "T2B": (51.04, -113.98), "T2C": (50.98, -114.02),
+    "T2E": (51.08, -114.03), "T2G": (51.04, -114.05), "T2H": (50.99, -114.04),
+    "T2J": (50.97, -114.04), "T2K": (51.09, -114.06), "T2L": (51.10, -114.11),
+    "T2M": (51.08, -114.08), "T2N": (51.07, -114.13), "T2P": (51.05, -114.07),
+    "T2R": (51.04, -114.08), "T2S": (51.02, -114.07), "T2T": (51.03, -114.08),
+    "T2V": (50.98, -114.08), "T2W": (50.95, -114.07), "T2X": (50.91, -114.00),
+    "T2Y": (50.93, -114.10), "T2Z": (50.91, -113.97), "T3A": (51.13, -114.18),
+    "T3B": (51.09, -114.17), "T3C": (51.05, -114.12), "T3E": (51.02, -114.12),
+    "T3G": (51.15, -114.15), "T3H": (51.05, -114.18), "T3J": (51.12, -113.95),
+    "T3K": (51.15, -114.05), "T3L": (51.17, -114.08), "T3M": (50.87, -114.07),
+    "T3N": (51.13, -114.01), "T3P": (51.12, -114.22), "T3R": (51.10, -114.24),
+    "T3Z": (51.08, -114.50), "T4A": (51.27, -114.00), "T4B": (51.29, -114.02),
+    "T4C": (51.20, -114.38),
+}
 
 
 @dataclass
@@ -76,11 +110,20 @@ def validate_postal_code(raw: str) -> Optional[str]:
 
 def geocode_postal_code(postal_code: str) -> Optional[Tuple[float, float]]:
     """Return (lat, lng) for a Canadian postal code, or None if lookup fails."""
-    fsa = postal_code.replace(" ", "")[:3]
-    row = _nomi.query_postal_code(fsa)
-    if row is None or math.isnan(row.latitude) or math.isnan(row.longitude):
-        return None
-    return (float(row.latitude), float(row.longitude))
+    fsa = postal_code.replace(" ", "")[:3].upper()
+    nomi = _get_nomi()
+    if nomi is not None:
+        try:
+            row = nomi.query_postal_code(fsa)
+            if row is not None and not math.isnan(row.latitude) and not math.isnan(row.longitude):
+                return (float(row.latitude), float(row.longitude))
+        except Exception as exc:
+            logger.warning("pgeocode lookup failed for %s: %s", fsa, exc)
+    fallback = _FSA_FALLBACK.get(fsa)
+    if fallback:
+        logger.info("Using FSA fallback for %s", fsa)
+        return fallback
+    return None
 
 
 def find_nearest_chapel(lat: float, lng: float) -> Tuple[Chapel, float]:
