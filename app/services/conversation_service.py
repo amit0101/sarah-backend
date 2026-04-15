@@ -81,7 +81,7 @@ class ConversationService:
                     "organization_id": str(org.id),
                     "message": {"content": gr.reply, "role": "assistant", "channel": channel},
                     "location_id": loc.id,
-                    "contact": {"ghl_contact_id": contact.ghl_contact_id},
+                    "contact": {"ghl_contact_id": contact.ghl_contact_id, "name": contact.name, "phone": contact.phone, "email": contact.email},
                 },
             )
             return gr.reply, True
@@ -99,7 +99,7 @@ class ConversationService:
                 "organization_id": str(org.id),
                 "message": {"content": user_text, "role": "user", "channel": channel},
                 "location_id": loc.id,
-                "contact": {"ghl_contact_id": contact.ghl_contact_id},
+                "contact": {"ghl_contact_id": contact.ghl_contact_id, "name": contact.name, "phone": contact.phone, "email": contact.email},
             },
         )
 
@@ -133,7 +133,7 @@ class ConversationService:
                 "organization_id": str(org.id),
                 "message": {"content": reply, "role": "assistant", "channel": channel},
                 "location_id": loc.id,
-                "contact": {"ghl_contact_id": contact.ghl_contact_id},
+                "contact": {"ghl_contact_id": contact.ghl_contact_id, "name": contact.name, "phone": contact.phone, "email": contact.email},
             },
         )
         return reply, True

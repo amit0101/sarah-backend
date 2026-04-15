@@ -160,7 +160,7 @@ class SarahToolRunner:
             {
                 "conversation_id": str(ctx.conversation.id),
                 "organization_id": str(ctx.organization.id),
-                "contact": {"ghl_contact_id": ghl_id, "name": contact.name, "phone": contact.phone},
+                "contact": {"ghl_contact_id": ghl_id, "name": contact.name, "phone": contact.phone, "email": contact.email},
                 "location_id": ctx.location.id,
             },
         )
