@@ -48,19 +48,25 @@ class VectorStoreService:
         )
 
     async def list_files_in_store(self, vector_store_id: str) -> list[dict]:
-        """List all files in a vector store, returning id + filename + status."""
+        """List all files in a vector store, paginating through all results."""
         if not self._client:
             raise RuntimeError("OPENAI_API_KEY not set")
-        result = await self._client.vector_stores.files.list(
-            vector_store_id=vector_store_id,
-        )
         files = []
-        for f in result.data:
-            files.append({
-                "file_id": f.id,
-                "status": f.status,
-                "created_at": f.created_at,
-            })
+        after: Optional[str] = None
+        while True:
+            kwargs = {"vector_store_id": vector_store_id, "limit": 100}
+            if after:
+                kwargs["after"] = after
+            result = await self._client.vector_stores.files.list(**kwargs)
+            for f in result.data:
+                files.append({
+                    "file_id": f.id,
+                    "status": f.status,
+                    "created_at": f.created_at,
+                })
+            if not result.has_more:
+                break
+            after = result.data[-1].id
         return files
 
     async def create_vector_store(self, name: str) -> str:
