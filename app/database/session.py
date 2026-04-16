@@ -10,12 +10,16 @@ from app.config import get_settings
 
 _settings = get_settings()
 
-# PgBouncer (e.g. Supabase pooler :6543, transaction mode) reuses backend sessions; asyncpg’s
-# prepared-statement cache then raises DuplicatePreparedStatementError. Disable statement cache.
+# asyncpg: disable server-side prepared statement cache when using PgBouncer poolers
+# (avoids DuplicatePreparedStatementError with transaction mode).
+# Pool size: keep modest when sharing Supabase Session pooler with other services (e.g. Comms).
 engine = create_async_engine(
     _settings.database_url,
     echo=_settings.debug,
     pool_pre_ping=True,
+    pool_size=_settings.db_pool_size,
+    max_overflow=_settings.db_max_overflow,
+    pool_timeout=_settings.db_pool_timeout,
     connect_args={"statement_cache_size": 0},
 )
 

@@ -27,6 +27,12 @@ class Settings(BaseSettings):
         ...,
         description="Async PostgreSQL URL, e.g. postgresql+asyncpg://...",
     )
+    # SQLAlchemy QueuePool: cap concurrent connections per process. Supabase Session pooler
+    # enforces a low global client limit; default 5+10 overflow can exhaust it alongside Comms.
+    # Override via DB_POOL_SIZE, DB_MAX_OVERFLOW, DB_POOL_TIMEOUT if needed.
+    db_pool_size: int = Field(default=3, ge=1, le=50)
+    db_max_overflow: int = Field(default=2, ge=0, le=50)
+    db_pool_timeout: int = Field(default=30, ge=5, le=300)
 
     # Supabase (REST / optional client usage)
     supabase_url: str = ""
