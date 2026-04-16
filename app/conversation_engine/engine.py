@@ -62,12 +62,16 @@ class ConversationEngine:
         max_rounds = 12
         current_input: Any = None
 
+        # OpenAI Responses API: when using previous_response_id, system instructions from
+        # earlier turns are NOT retained — you must pass `instructions` on every request
+        # or the model loses tool guidance and behavioural rules (GLOBAL_BRAND).
         for round_idx in range(max_rounds):
             if round_idx == 0:
                 if chain_from_db:
                     kwargs: Dict[str, Any] = {
                         "model": self._model,
                         "previous_response_id": chain_from_db,
+                        "instructions": instructions,
                         "input": user_text,
                         "tools": tools,
                     }
@@ -83,6 +87,7 @@ class ConversationEngine:
                 kwargs = {
                     "model": self._model,
                     "previous_response_id": last_resp.id,
+                    "instructions": instructions,
                     "input": current_input,
                     "tools": tools,
                 }
