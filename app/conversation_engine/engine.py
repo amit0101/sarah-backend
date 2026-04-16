@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from openai import AsyncOpenAI
@@ -12,9 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.conversation_engine.prompt_manager import build_system_prompt
 from app.conversation_engine.tool_definitions import sarah_tools
+from app.models.openai_response_log import OpenAIResponseLog
 from app.services.sarah_tools import SarahToolRunner, ToolContext
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_response(resp: Response) -> Dict[str, Any]:
+    try:
+        if hasattr(resp, "model_dump"):
+            return resp.model_dump(mode="json")  # type: ignore[no-any-return]
+    except Exception:
+        logger.debug("model_dump failed for response", exc_info=True)
+    return {"id": getattr(resp, "id", None), "error": "serialization_failed"}
 
 
 def _extract_text(resp: Response) -> str:
@@ -35,6 +46,24 @@ class ConversationEngine:
         s = get_settings()
         self._client = AsyncOpenAI(api_key=s.openai_api_key) if s.openai_api_key else None
         self._model = s.openai_model
+
+    async def _persist_openai_response(self, resp: Response, round_idx: int) -> None:
+        tid = getattr(self._ctx, "turn_id", None)
+        if not isinstance(tid, uuid.UUID):
+            return
+        try:
+            self._db.add(
+                OpenAIResponseLog(
+                    conversation_id=self._ctx.conversation.id,
+                    turn_id=tid,
+                    round_index=round_idx,
+                    openai_response_id=resp.id,
+                    payload=_serialize_response(resp),
+                )
+            )
+            await self._db.flush()
+        except Exception:
+            logger.exception("Failed to persist OpenAI response log (turn_id=%s)", tid)
 
     async def run_turn(
         self,
@@ -94,6 +123,7 @@ class ConversationEngine:
 
             resp = await self._client.responses.create(**kwargs)
             last_resp = resp
+            await self._persist_openai_response(resp, round_idx)
 
             calls = [i for i in (resp.output or []) if i.type == "function_call"]
             if not calls:

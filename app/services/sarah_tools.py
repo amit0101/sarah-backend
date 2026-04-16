@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +45,8 @@ class ToolContext:
     calendar: GoogleCalendarAdapter
     obituaries: TributeCenterClient
     notifications: NotificationService
+    # One UUID per user message turn; used to correlate openai_response_logs rows.
+    turn_id: Optional[uuid.UUID] = None
 
 
 class SarahToolRunner:

@@ -103,6 +103,7 @@ class ConversationService:
             },
         )
 
+        turn_id = uuid.uuid4()
         ghl = await get_ghl_client(self._db, org.id)
         ctx = ToolContext(
             db=self._db,
@@ -115,6 +116,7 @@ class ConversationService:
             calendar=self._calendar,
             obituaries=self._obits,
             notifications=self._notify,
+            turn_id=turn_id,
         )
         engine = ConversationEngine(self._db, ctx)
         reply, new_rid = await engine.run_turn(
