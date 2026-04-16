@@ -55,6 +55,15 @@ class SarahToolRunner:
             args = json.loads(arguments_json) if arguments_json else {}
         except json.JSONDecodeError:
             args = {}
+        # Temporary: confirm which tools actually run (remove or downgrade when stable).
+        _args_preview = (arguments_json or "")[:800]
+        logger.info(
+            "sarah_tool_invoked name=%s conversation_id=%s turn_id=%s args_preview=%r",
+            name,
+            ctx.conversation.id,
+            getattr(ctx, "turn_id", None),
+            _args_preview,
+        )
         if name == "create_contact":
             return await self._create_contact(ctx, args)
         if name == "apply_tag":
