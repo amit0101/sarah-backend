@@ -10,18 +10,29 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
         {
             "type": "function",
             "name": "create_contact",
-            "strict": True,
-            "description": "Create or update the visitor's contact in CRM with name, phone, email.",
+            # strict:false so phone/email can be omitted when not yet collected.
+            # The backend find_or_create is idempotent — safe to call again with more fields.
+            "description": (
+                "Create or update the visitor's contact in CRM. "
+                "Call as soon as you have first_name + last_name + at least phone OR email. "
+                "If you collect more fields later (e.g. email after capturing phone) call again "
+                "with all known values — the system updates, not duplicates."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "first_name": {"type": "string"},
                     "last_name": {"type": "string"},
-                    "phone": {"type": "string", "description": "E.164 or North American format"},
-                    "email": {"type": "string"},
+                    "phone": {
+                        "type": "string",
+                        "description": "E.164 or North American format — include if known",
+                    },
+                    "email": {
+                        "type": "string",
+                        "description": "Include if known",
+                    },
                 },
-                # Strict mode: every property key must appear in required; use "" when unknown.
-                "required": ["first_name", "last_name", "phone", "email"],
+                "required": ["first_name", "last_name"],
                 "additionalProperties": False,
             },
         },
