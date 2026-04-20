@@ -17,6 +17,8 @@ from app.ghl_client import calendars as ghl_cal
 from app.ghl_client import contacts as ghl_contacts
 from app.ghl_client import pipelines as ghl_pipes
 from app.ghl_client import tags as ghl_tags
+from app.models.appointment import Appointment
+from app.models.calendar import Calendar
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.models.location import Location
@@ -24,6 +26,7 @@ from app.models.organization import Organization
 from app.notifications.service import NotificationService
 from app.obituary_client.client import TributeCenterClient
 from app.calendar_client.google_adapter import GoogleCalendarAdapter
+from app.services import calendar_service as cal_svc
 from app.services.location_config import get_pipeline_map, get_tag_map, resolve_tag_key
 from app.services.postal_code import resolve_area as _resolve_area
 from app.services.postal_code import resolve_postal_code as _resolve_postal_code
@@ -74,6 +77,10 @@ class SarahToolRunner:
             return await self._check_calendar(ctx, args)
         if name == "book_appointment":
             return await self._book_appointment(ctx, args)
+        if name == "reschedule_appointment":
+            return await self._reschedule_appointment(ctx, args)
+        if name == "cancel_appointment":
+            return await self._cancel_appointment(ctx, args)
         if name == "search_obituary":
             return await self._search_obituary(ctx, args)
         if name == "escalate_to_staff":
@@ -93,7 +100,12 @@ class SarahToolRunner:
         if v is None:
             return None
         s = str(v).strip()
-        return s or None
+        # Models occasionally serialize a missing field as the literal string
+        # "undefined" / "null" / "None" — treat those the same as empty so we
+        # don't leak ghost contacts named "undefined undefined" into GHL.
+        if s.lower() in {"", "undefined", "null", "none"}:
+            return None
+        return s
 
     async def _create_contact(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
         svc = ContactService(ctx.db, ctx.ghl)
@@ -101,6 +113,29 @@ class SarahToolRunner:
         ln = self._opt_str(args.get("last_name"))
         phone = self._opt_str(args.get("phone"))
         email = self._opt_str(args.get("email"))
+
+        # Guard: with the eager-capture prompt, the model sometimes fires
+        # create_contact before any name is in the conversation. Without this
+        # guard those calls produce ghost "undefined undefined" rows in GHL.
+        # Soft-error back to the model so it asks the user for a name first.
+        if not fn and not ln:
+            logger.info(
+                "create_contact rejected: empty first_name + last_name conversation_id=%s args_preview=%r",
+                ctx.conversation.id,
+                {
+                    "first_name": args.get("first_name"),
+                    "last_name": args.get("last_name"),
+                },
+            )
+            return json.dumps({
+                "ok": False,
+                "error": "missing_name",
+                "message": (
+                    "Need at least a first or last name before creating a contact. "
+                    "Ask the user for their name first, then call create_contact again."
+                ),
+            })
+
         name = " ".join(x for x in (fn, ln) if x).strip() or None
         try:
             contact, ghl_id = await svc.find_or_create(
@@ -257,15 +292,58 @@ class SarahToolRunner:
         )
         return json.dumps({"ok": True, "created": created})
 
+    # ─── Helpers shared by check / book / reschedule / cancel ────────────────
+
+    def _intent_from_path(self, ctx: ToolContext) -> str:
+        """Map Sarah's conversation path to the appointments-architecture intent."""
+        path = (ctx.conversation.active_path or "").strip()
+        if path == "pre_need":
+            return "pre_need"
+        # immediate_need, general, obituary, pet_cremation → at_need is the
+        # only flow that does anything useful here. Pre-need is the only path
+        # with a different booking algorithm.
+        return "at_need"
+
+    def _service_type_from_appt_type(
+        self, appointment_type: str, intent: str
+    ) -> str:
+        """Map Sarah's user-facing appointment_type enum to the DB CHECK list."""
+        norm = (appointment_type or "").strip().lower()
+        if norm in {"pre-arrangement", "pre arrangement", "preplanning", "pre-planning"}:
+            return "pre_need_consult"
+        if norm in {"after care", "aftercare"}:
+            # No dedicated 'after_care' DB enum value; fold into arrangement_conf.
+            return "arrangement_conf"
+        # Default: at-need arrangement conference.
+        return "pre_need_consult" if intent == "pre_need" else "arrangement_conf"
+
+    async def _has_seeded_primaries(
+        self, ctx: ToolContext, *, kind: str = "primary"
+    ) -> bool:
+        """True iff the org has at least one active sarah.calendars row of `kind`.
+
+        Drives the new-vs-legacy fallback in _check_calendar / _book_appointment.
+        While calendars are unseeded (current state, feature flags off) every
+        call short-circuits to the legacy single-calendar path, preserving
+        Sarah's pre-W3 behaviour. Once Jeff seeds Primary calendars (or the
+        room/pre-arranger flags flip), the new typed-pool path takes over —
+        no further code change required.
+        """
+        from sqlalchemy import select as _select  # local import for clarity
+
+        stmt = _select(Calendar.id).where(
+            Calendar.organization_id == ctx.organization.id,
+            Calendar.kind == kind,
+            Calendar.active.is_(True),
+        ).limit(1)
+        return (await ctx.db.execute(stmt)).first() is not None
+
     async def _check_calendar(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
-        from datetime import date as date_cls, datetime, timedelta
+        from datetime import datetime, timedelta
         from zoneinfo import ZoneInfo
 
         date_str = str(args.get("date", ""))
         tz_name = str(args.get("timezone", "America/Edmonton"))
-        cal_id = ctx.location.availability_calendar_id or ctx.location.calendar_id
-        if not cal_id:
-            return json.dumps({"ok": False, "error": "no calendar configured"})
 
         try:
             tz = ZoneInfo(tz_name)
@@ -282,9 +360,56 @@ class SarahToolRunner:
             dt = datetime.now(tz).date() + timedelta(days=1)
             date_str = dt.isoformat()
 
+        intent = self._intent_from_path(ctx)
+        use_new_path = await self._has_seeded_primaries(ctx)
+
+        if use_new_path:
+            try:
+                slots = await cal_svc.propose_slots(
+                    db=ctx.db,
+                    calendar=ctx.calendar,
+                    organization=ctx.organization,
+                    intent=intent,
+                    location_slug=ctx.location.id,
+                    target_date=dt,
+                    timezone=tz_name,
+                )
+            except Exception:
+                logger.exception(
+                    "propose_slots_failed conv=%s loc=%s intent=%s",
+                    ctx.conversation.id,
+                    ctx.location.id,
+                    intent,
+                )
+                slots = []
+
+            if slots:
+                return json.dumps({
+                    "ok": True,
+                    "date": date_str,
+                    "location": ctx.location.name,
+                    "intent": intent,
+                    "available": True,
+                    "slots": [
+                        {
+                            "starts_at": s.starts_at.isoformat(),
+                            "ends_at": s.ends_at.isoformat(),
+                            "primary": s.primary_label,
+                            "venue": s.venue_label,
+                        }
+                        for s in slots
+                    ],
+                })
+
+        # Legacy fallback: roster-based availability against the shared
+        # availability_calendar_id (preserves Sarah's current behaviour while
+        # Primary calendars are unseeded).
+        cal_id = ctx.location.availability_calendar_id or ctx.location.calendar_id
+        if not cal_id:
+            return json.dumps({"ok": False, "error": "no calendar configured"})
+
         start = datetime(dt.year, dt.month, dt.day, 0, 0, 0, tzinfo=tz)
         end = datetime(dt.year, dt.month, dt.day, 23, 59, 59, tzinfo=tz)
-
         events = await ctx.calendar.list_events(
             cal_id,
             time_min_iso=start.isoformat(),
@@ -299,12 +424,105 @@ class SarahToolRunner:
         return json.dumps(result)
 
     async def _book_appointment(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
+        from datetime import datetime
+        from sqlalchemy import select as _select
+
         start = str(args.get("start_iso", ""))
         end = str(args.get("end_iso", ""))
         family_name = str(self._opt_str(args.get("family_name")) or "Family")
         counselor_name = self._opt_str(args.get("counselor_name")) or ""
         appointment_type = str(self._opt_str(args.get("appointment_type")) or "Arrangement")
         notes = self._opt_str(args.get("notes"))
+
+        intent = self._intent_from_path(ctx)
+        service_type = self._service_type_from_appt_type(appointment_type, intent)
+
+        # Try the new typed-pool path: find a Primary calendar matching the
+        # counselor name the model picked from check_calendar.
+        primary_cal: Optional[Calendar] = None
+        if counselor_name:
+            stmt = _select(Calendar).where(
+                Calendar.organization_id == ctx.organization.id,
+                Calendar.kind == "primary",
+                Calendar.active.is_(True),
+                Calendar.name == counselor_name,
+            ).limit(1)
+            primary_cal = (await ctx.db.execute(stmt)).scalar_one_or_none()
+
+        if primary_cal is not None:
+            try:
+                start_dt = datetime.fromisoformat(start)
+                end_dt = datetime.fromisoformat(end)
+            except ValueError:
+                return json.dumps({
+                    "ok": False,
+                    "error": "invalid start_iso/end_iso (must be ISO 8601 with timezone)",
+                })
+
+            slot = cal_svc.SlotProposal(
+                starts_at=start_dt,
+                ends_at=end_dt,
+                primary_calendar_id=primary_cal.google_id,
+                primary_label=primary_cal.name,
+            )
+
+            ghl_cal_id = ctx.location.ghl_calendar_id
+            ghl_loc = self._ghl_scope(ctx)
+            ghl_contact_id = ctx.contact.ghl_contact_id
+
+            push_to_ghl = self._make_ghl_create_push(
+                ctx, ghl_cal_id=ghl_cal_id, ghl_loc=ghl_loc, ghl_contact_id=ghl_contact_id,
+            )
+
+            try:
+                appt = await cal_svc.confirm_booking(
+                    db=ctx.db,
+                    calendar=ctx.calendar,
+                    organization=ctx.organization,
+                    slot=slot,
+                    contact=ctx.contact,
+                    intent=intent,
+                    service_type=service_type,
+                    created_by="sarah",
+                    conversation_id=ctx.conversation.id,
+                    notes=notes,
+                    push_to_ghl=push_to_ghl,
+                )
+            except Exception:
+                logger.exception(
+                    "confirm_booking_failed conv=%s primary=%s",
+                    ctx.conversation.id,
+                    primary_cal.google_id,
+                )
+                return json.dumps({"ok": False, "error": "booking failed"})
+
+            await ctx.dispatcher.emit(
+                "appointment.booked",
+                {
+                    "conversation_id": str(ctx.conversation.id),
+                    "organization_id": str(ctx.organization.id),
+                    "contact": {"ghl_contact_id": ghl_contact_id},
+                    "appointment_id": str(appt.id),
+                    "calendar": primary_cal.google_id,
+                    "start": start,
+                    "location_id": ctx.location.id,
+                    "counselor": counselor_name,
+                    "family_name": family_name,
+                    "intent": intent,
+                    "service_type": service_type,
+                },
+            )
+            return json.dumps({
+                "ok": True,
+                "appointment_id": str(appt.id),
+                "intent": intent,
+                "service_type": service_type,
+                "starts_at": appt.starts_at.isoformat(),
+                "ends_at": appt.ends_at.isoformat(),
+                "primary": primary_cal.name,
+            })
+
+        # ── Legacy fallback (no Primary calendars seeded yet) ────────────────
         cal_id = ctx.location.calendar_id
         if not cal_id:
             return json.dumps({"ok": False, "error": "no calendar_id"})
@@ -363,9 +581,200 @@ class SarahToolRunner:
                 "location_id": ctx.location.id,
                 "counselor": counselor_name,
                 "family_name": family_name,
+                "legacy_path": True,
             },
         )
-        return json.dumps({"ok": True, "event": ev})
+        return json.dumps({"ok": True, "event": ev, "legacy_path": True})
+
+    # ─── GHL push wrappers (injected into calendar_service) ──────────────────
+
+    def _make_ghl_create_push(
+        self,
+        ctx: ToolContext,
+        *,
+        ghl_cal_id: Optional[str],
+        ghl_loc: str,
+        ghl_contact_id: Optional[str],
+    ):
+        async def _push(appt: Appointment) -> Optional[str]:
+            if not ghl_cal_id or not ghl_contact_id:
+                return None
+            try:
+                resp = await ghl_cal.create_appointment(
+                    ctx.ghl,
+                    ghl_cal_id,
+                    location_id=ghl_loc,
+                    contact_id=ghl_contact_id,
+                    start_time=appt.starts_at.isoformat(),
+                    end_time=appt.ends_at.isoformat(),
+                    title=f"{appt.service_type.replace('_', ' ').title()}",
+                    notes=appt.notes,
+                )
+            except Exception as e:
+                logger.warning("GHL create_appointment failed: %s", e)
+                return None
+            return str(resp.get("id") or resp.get("appointment", {}).get("id") or "") or None
+
+        return _push
+
+    def _make_ghl_update_push(self, ctx: ToolContext, *, ghl_loc: str):
+        async def _push(appt: Appointment, new_start: Any, new_end: Any) -> None:
+            if not appt.ghl_appointment_id:
+                return
+            try:
+                await ghl_cal.update_appointment(
+                    ctx.ghl,
+                    appt.ghl_appointment_id,
+                    location_id=ghl_loc,
+                    startTime=new_start.isoformat(),
+                    endTime=new_end.isoformat(),
+                )
+            except Exception as e:
+                logger.warning("GHL update_appointment failed: %s", e)
+
+        return _push
+
+    def _make_ghl_cancel_push(self, ctx: ToolContext, *, ghl_loc: str):
+        async def _push(appt: Appointment) -> None:
+            if not appt.ghl_appointment_id:
+                return
+            try:
+                await ghl_cal.cancel_appointment(
+                    ctx.ghl,
+                    appt.ghl_appointment_id,
+                    location_id=ghl_loc,
+                )
+            except Exception as e:
+                logger.warning("GHL cancel_appointment failed: %s", e)
+
+        return _push
+
+    # ─── Reschedule / cancel handlers ────────────────────────────────────────
+
+    async def _load_appointment_for_org(
+        self, ctx: ToolContext, appointment_id_str: str
+    ) -> Optional[Appointment]:
+        try:
+            appt_uuid = uuid.UUID(appointment_id_str)
+        except (ValueError, TypeError):
+            return None
+        appt = await ctx.db.get(Appointment, appt_uuid)
+        if appt is None or appt.organization_id != ctx.organization.id:
+            return None
+        return appt
+
+    async def _reschedule_appointment(
+        self, ctx: ToolContext, args: Dict[str, Any]
+    ) -> str:
+        from datetime import datetime
+
+        appointment_id = self._opt_str(args.get("appointment_id"))
+        new_start = self._opt_str(args.get("start_iso"))
+        new_end = self._opt_str(args.get("end_iso"))
+        notes = self._opt_str(args.get("notes"))
+
+        if not appointment_id or not new_start or not new_end:
+            return json.dumps({
+                "ok": False,
+                "error": "appointment_id, start_iso, end_iso are required",
+            })
+
+        appt = await self._load_appointment_for_org(ctx, appointment_id)
+        if appt is None:
+            return json.dumps({
+                "ok": False,
+                "error": "appointment not found for this organization",
+            })
+
+        try:
+            start_dt = datetime.fromisoformat(new_start)
+            end_dt = datetime.fromisoformat(new_end)
+        except ValueError:
+            return json.dumps({
+                "ok": False,
+                "error": "invalid start_iso/end_iso (must be ISO 8601 with timezone)",
+            })
+
+        push = self._make_ghl_update_push(ctx, ghl_loc=self._ghl_scope(ctx))
+        try:
+            updated = await cal_svc.reschedule_booking(
+                db=ctx.db,
+                calendar=ctx.calendar,
+                organization=ctx.organization,
+                appointment=appt,
+                new_starts_at=start_dt,
+                new_ends_at=end_dt,
+                notes=notes,
+                push_to_ghl=push,
+            )
+        except ValueError as e:
+            return json.dumps({"ok": False, "error": str(e)})
+        except Exception:
+            logger.exception("reschedule_booking_failed appointment_id=%s", appt.id)
+            return json.dumps({"ok": False, "error": "reschedule failed"})
+
+        await ctx.dispatcher.emit(
+            "appointment.rescheduled",
+            {
+                "conversation_id": str(ctx.conversation.id),
+                "organization_id": str(ctx.organization.id),
+                "contact": {"ghl_contact_id": ctx.contact.ghl_contact_id},
+                "appointment_id": str(updated.id),
+                "starts_at": updated.starts_at.isoformat(),
+                "ends_at": updated.ends_at.isoformat(),
+                "location_id": ctx.location.id,
+            },
+        )
+        return json.dumps({
+            "ok": True,
+            "appointment_id": str(updated.id),
+            "status": updated.status,
+            "starts_at": updated.starts_at.isoformat(),
+            "ends_at": updated.ends_at.isoformat(),
+        })
+
+    async def _cancel_appointment(
+        self, ctx: ToolContext, args: Dict[str, Any]
+    ) -> str:
+        appointment_id = self._opt_str(args.get("appointment_id"))
+        if not appointment_id:
+            return json.dumps({"ok": False, "error": "appointment_id is required"})
+
+        appt = await self._load_appointment_for_org(ctx, appointment_id)
+        if appt is None:
+            return json.dumps({
+                "ok": False,
+                "error": "appointment not found for this organization",
+            })
+
+        push = self._make_ghl_cancel_push(ctx, ghl_loc=self._ghl_scope(ctx))
+        try:
+            cancelled = await cal_svc.cancel_booking(
+                db=ctx.db,
+                calendar=ctx.calendar,
+                organization=ctx.organization,
+                appointment=appt,
+                push_to_ghl=push,
+            )
+        except Exception:
+            logger.exception("cancel_booking_failed appointment_id=%s", appt.id)
+            return json.dumps({"ok": False, "error": "cancel failed"})
+
+        await ctx.dispatcher.emit(
+            "appointment.cancelled",
+            {
+                "conversation_id": str(ctx.conversation.id),
+                "organization_id": str(ctx.organization.id),
+                "contact": {"ghl_contact_id": ctx.contact.ghl_contact_id},
+                "appointment_id": str(cancelled.id),
+                "location_id": ctx.location.id,
+            },
+        )
+        return json.dumps({
+            "ok": True,
+            "appointment_id": str(cancelled.id),
+            "status": cancelled.status,
+        })
 
     async def _search_obituary(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
         nm = self._opt_str(args.get("name"))

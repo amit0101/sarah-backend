@@ -139,6 +139,61 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
         },
         {
             "type": "function",
+            "name": "reschedule_appointment",
+            "strict": True,
+            "description": (
+                "Move an existing appointment to a new start/end time. Use the "
+                "appointment_id returned by a previous book_appointment call. "
+                "Updates the calendar event-of-record, any room hold, GHL, and "
+                "the appointments table."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "appointment_id": {
+                        "type": "string",
+                        "description": "UUID of the appointment to move (returned by book_appointment).",
+                    },
+                    "start_iso": {
+                        "type": "string",
+                        "description": "New appointment start in ISO 8601 with timezone offset.",
+                    },
+                    "end_iso": {
+                        "type": "string",
+                        "description": "New appointment end (typically same duration as the original).",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Optional updated notes (replaces existing notes if provided).",
+                    },
+                },
+                "required": ["appointment_id", "start_iso", "end_iso", "notes"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "cancel_appointment",
+            "strict": True,
+            "description": (
+                "Cancel an existing appointment. Use the appointment_id returned by "
+                "a previous book_appointment call. Removes the calendar event-of-record, "
+                "any room hold, the GHL mirror, and marks the appointments row cancelled."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "appointment_id": {
+                        "type": "string",
+                        "description": "UUID of the appointment to cancel (returned by book_appointment).",
+                    },
+                },
+                "required": ["appointment_id"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
             "name": "search_obituary",
             "strict": True,
             "description": "Search obituaries via Tribute Center.",
