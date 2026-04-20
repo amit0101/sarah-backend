@@ -1,11 +1,11 @@
 """Tenant / funeral home operator — one GHL sub-account per org (typical)."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 import uuid
 
 from sqlalchemy import DateTime, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -41,6 +41,13 @@ class Organization(Base):
         Text,
         nullable=True,
     )  # E.164 for inbound SMS routing to this org
+    # Org-level configuration; feature flags live under config['feature_flags'].
+    # See APPOINTMENTS_ARCHITECTURE.md §4.3 (room_calendars_enabled, pre_arrangers_enabled).
+    config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default="{}",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
