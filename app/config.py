@@ -61,9 +61,15 @@ class Settings(BaseSettings):
     tribute_center_api_key: str = ""
     tribute_center_base_url: str = ""
 
-    # Outbound webhooks (Comms Platform)
+    # Outbound webhooks (Sarah → Comms Platform)
     comms_platform_webhook_url: str = ""
     comms_webhook_secret: str = ""
+
+    # Inbound webhooks (Comms Platform → Sarah). Must match the value of
+    # SARAH_WEBHOOK_SECRET on the comms-platform-backend Render env. Used
+    # by the internal HTTP bridge in app/api/routes/internal.py to gate
+    # calls from comms (calendar availability/book/reschedule/cancel).
+    sarah_webhook_secret: str = ""
 
     # Website crawl
     website_crawl_base_url: str = "https://www.mhfh.com"

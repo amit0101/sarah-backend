@@ -27,6 +27,7 @@ from app.notifications.service import NotificationService
 from app.obituary_client.client import TributeCenterClient
 from app.calendar_client.google_adapter import GoogleCalendarAdapter
 from app.services import calendar_service as cal_svc
+from app.services import ghl_push
 from app.services.location_config import get_pipeline_map, get_tag_map, resolve_tag_key
 from app.services.postal_code import resolve_area as _resolve_area
 from app.services.postal_code import resolve_postal_code as _resolve_postal_code
@@ -586,7 +587,7 @@ class SarahToolRunner:
         )
         return json.dumps({"ok": True, "event": ev, "legacy_path": True})
 
-    # ─── GHL push wrappers (injected into calendar_service) ──────────────────
+    # ─── GHL push wrappers (thin delegations to app.services.ghl_push) ───────
 
     def _make_ghl_create_push(
         self,
@@ -596,58 +597,18 @@ class SarahToolRunner:
         ghl_loc: str,
         ghl_contact_id: Optional[str],
     ):
-        async def _push(appt: Appointment) -> Optional[str]:
-            if not ghl_cal_id or not ghl_contact_id:
-                return None
-            try:
-                resp = await ghl_cal.create_appointment(
-                    ctx.ghl,
-                    ghl_cal_id,
-                    location_id=ghl_loc,
-                    contact_id=ghl_contact_id,
-                    start_time=appt.starts_at.isoformat(),
-                    end_time=appt.ends_at.isoformat(),
-                    title=f"{appt.service_type.replace('_', ' ').title()}",
-                    notes=appt.notes,
-                )
-            except Exception as e:
-                logger.warning("GHL create_appointment failed: %s", e)
-                return None
-            return str(resp.get("id") or resp.get("appointment", {}).get("id") or "") or None
-
-        return _push
+        return ghl_push.make_create_push(
+            ctx.ghl,
+            ghl_calendar_id=ghl_cal_id,
+            ghl_location_id=ghl_loc,
+            ghl_contact_id=ghl_contact_id,
+        )
 
     def _make_ghl_update_push(self, ctx: ToolContext, *, ghl_loc: str):
-        async def _push(appt: Appointment, new_start: Any, new_end: Any) -> None:
-            if not appt.ghl_appointment_id:
-                return
-            try:
-                await ghl_cal.update_appointment(
-                    ctx.ghl,
-                    appt.ghl_appointment_id,
-                    location_id=ghl_loc,
-                    startTime=new_start.isoformat(),
-                    endTime=new_end.isoformat(),
-                )
-            except Exception as e:
-                logger.warning("GHL update_appointment failed: %s", e)
-
-        return _push
+        return ghl_push.make_update_push(ctx.ghl, ghl_location_id=ghl_loc)
 
     def _make_ghl_cancel_push(self, ctx: ToolContext, *, ghl_loc: str):
-        async def _push(appt: Appointment) -> None:
-            if not appt.ghl_appointment_id:
-                return
-            try:
-                await ghl_cal.cancel_appointment(
-                    ctx.ghl,
-                    appt.ghl_appointment_id,
-                    location_id=ghl_loc,
-                )
-            except Exception as e:
-                logger.warning("GHL cancel_appointment failed: %s", e)
-
-        return _push
+        return ghl_push.make_cancel_push(ctx.ghl, ghl_location_id=ghl_loc)
 
     # ─── Reschedule / cancel handlers ────────────────────────────────────────
 
