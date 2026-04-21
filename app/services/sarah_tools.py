@@ -571,12 +571,45 @@ class SarahToolRunner:
                 )
             except Exception as e:
                 logger.warning("GHL appointment sync failed: %s", e)
+
+        # Write canonical sarah.appointments row so the booking surfaces
+        # in the comms platform calendar page (and any future reports).
+        try:
+            start_dt = datetime.fromisoformat(start)
+            end_dt = datetime.fromisoformat(end)
+        except ValueError:
+            start_dt = None
+            end_dt = None
+
+        appt_id: Optional[uuid.UUID] = None
+        if start_dt and end_dt:
+            google_event_id = None
+            if isinstance(ev, dict):
+                google_event_id = ev.get("id")
+            appt = Appointment(
+                organization_id=ctx.organization.id,
+                contact_id=ctx.contact.id,
+                conversation_id=ctx.conversation.id,
+                service_type=service_type,
+                intent=intent,
+                starts_at=start_dt,
+                ends_at=end_dt,
+                google_event_id=google_event_id,
+                status="scheduled",
+                created_by="sarah",
+                notes=notes,
+            )
+            ctx.db.add(appt)
+            await ctx.db.flush()
+            appt_id = appt.id
+
         await ctx.dispatcher.emit(
             "appointment.booked",
             {
                 "conversation_id": str(ctx.conversation.id),
                 "organization_id": str(ctx.organization.id),
                 "contact": {"ghl_contact_id": cid},
+                "appointment_id": str(appt_id) if appt_id else None,
                 "calendar": cal_id,
                 "start": start,
                 "location_id": ctx.location.id,
@@ -585,7 +618,7 @@ class SarahToolRunner:
                 "legacy_path": True,
             },
         )
-        return json.dumps({"ok": True, "event": ev, "legacy_path": True})
+        return json.dumps({"ok": True, "event": ev, "appointment_id": str(appt_id) if appt_id else None, "legacy_path": True})
 
     # ─── GHL push wrappers (thin delegations to app.services.ghl_push) ───────
 
