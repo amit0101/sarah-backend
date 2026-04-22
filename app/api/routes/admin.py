@@ -26,6 +26,7 @@ from app.knowledge_base.crawler import crawl_site_to_vector_store
 from app.knowledge_base.vector_store import VectorStoreService
 from app.models.location import Location
 from app.models.organization import Organization
+from app.models.conversation import Conversation
 from app.models.prompt import Prompt
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin_key)])
@@ -316,6 +317,79 @@ async def put_location_escalation(
     await db.commit()
     return {"status": "ok"}
 
+# --- Conversations ---
+
+
+@router.get("/organizations/{org_id}/conversations")
+async def list_conversations(
+    org_id: uuid.UUID,
+    db: DbSession,
+    since: Optional[str] = None,
+    location_id: Optional[str] = None,
+    channel: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """List conversations for an org, optionally filtered by date/location/channel/status."""
+    from app.models.message import Message
+
+    q = (
+        select(Conversation)
+        .where(Conversation.organization_id == org_id)
+        .order_by(Conversation.started_at.desc())
+        .limit(limit)
+    )
+    if since:
+        from datetime import datetime, timezone
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, "invalid 'since' date format — use ISO 8601")
+        q = q.where(Conversation.started_at >= since_dt)
+    if location_id:
+        q = q.where(Conversation.location_id == location_id)
+    if channel:
+        q = q.where(Conversation.channel == channel)
+    if status:
+        q = q.where(Conversation.status == status)
+
+    r = await db.execute(q)
+    convos = r.scalars().all()
+
+    results = []
+    for c in convos:
+        mr = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == c.id)
+            .order_by(Message.created_at)
+        )
+        msgs = mr.scalars().all()
+        results.append({
+            "conversation_id": str(c.id),
+            "contact_id": str(c.contact_id),
+            "location_id": c.location_id,
+            "channel": c.channel,
+            "mode": c.mode,
+            "status": c.status,
+            "started_at": c.started_at.isoformat() if c.started_at else None,
+            "message_count": len(msgs),
+            "messages": [
+                {
+                    "id": str(m.id),
+                    "role": m.role,
+                    "content": m.content,
+                    "channel": m.channel,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m in msgs
+            ],
+        })
+
+    return {
+        "organization_id": str(org_id),
+        "count": len(results),
+        "conversations": results,
+    }
 
 
 
