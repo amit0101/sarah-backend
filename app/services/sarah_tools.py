@@ -811,6 +811,21 @@ class SarahToolRunner:
         )
         await ctx.notifications.notify_escalation(**notify_kwargs)
         ctx.conversation.mode = "staff"
+
+        # Apply sarah_escalated tag to GHL contact → triggers Sarah Escalation
+        # Alert (Enhanced) workflow in GHL.
+        ghl_cid = ctx.contact.ghl_contact_id
+        if ghl_cid:
+            ghl_loc = self._ghl_scope(ctx)
+            try:
+                await ghl_tags.add_tags(
+                    ctx.ghl, ghl_cid, location_id=ghl_loc,
+                    tags=["sarah_escalated"],
+                )
+                logger.info("Applied sarah_escalated tag to contact %s", ghl_cid)
+            except Exception as e:
+                logger.warning("Failed to apply sarah_escalated tag: %s", e)
+
         await ctx.dispatcher.emit(
             "escalation.triggered",
             {
