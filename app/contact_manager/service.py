@@ -46,11 +46,27 @@ class ContactService:
         first_name: Optional[str] = None,
         last_name: Optional[str] = None,
         source_channel: str = "webchat",
+        conversation_id: Optional[str] = None,
     ) -> tuple[Contact, str]:
         """Returns (Contact, ghl_contact_id)."""
         ghl_loc = await self.resolve_ghl_scope_location_id(location)
         phone_ok, phone_e164 = normalize_phone_ca_us(phone) if phone else (False, None)
         email_ok, email_norm = validate_email_addr(email) if email else (False, None)
+
+        # GHL custom fields required for workflow isolation gates.
+        # source_channel → Appointment Confirmation/Reminder isolation
+        # conversation_mode → Inbound Router isolation
+        # sarah_location_id → location-based routing
+        # sarah_last_conversation_id → conversation traceability
+        custom_fields = [
+            {"id": "rOnwZB1ZYly10bWBo8XJ", "field_value": source_channel},   # source_channel
+            {"id": "MCbDtnYunljo58wxLxPt", "field_value": "ai"},              # conversation_mode
+            {"id": "GIKbV4hAdLucXHdpqIAt", "field_value": location.id},       # sarah_location_id
+        ]
+        if conversation_id:
+            custom_fields.append(
+                {"id": "cffxjpazXikidAt7qh9E", "field_value": conversation_id}  # sarah_last_conversation_id
+            )
 
         existing_ghl: Optional[Dict[str, Any]] = None
         if phone_e164:
@@ -73,6 +89,7 @@ class ContactService:
                     name=name or existing_ghl.get("name"),
                     phone=phone_e164 or existing_ghl.get("phone"),
                     email=email_norm or existing_ghl.get("email"),
+                    customFields=custom_fields,
                 )
         else:
             tags: list[str] = []
@@ -85,6 +102,7 @@ class ContactService:
                 phone=phone_e164,
                 email=email_norm,
                 tags=tags,
+                custom_fields=custom_fields,
                 source=source_channel,
             )
             ghl_id = str(body.get("contact", {}).get("id") or body.get("id") or "")

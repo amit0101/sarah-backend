@@ -147,6 +147,7 @@ class SarahToolRunner:
                 first_name=fn,
                 last_name=ln,
                 source_channel=ctx.conversation.channel,
+                conversation_id=str(ctx.conversation.id),
             )
         except Exception as e:
             logger.error("GHL contact creation failed, saving locally: %s", e)
