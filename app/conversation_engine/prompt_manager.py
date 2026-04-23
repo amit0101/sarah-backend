@@ -8,6 +8,10 @@ prompts are layered on top from the database.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from datetime import datetime
 from typing import Any, Dict
 from zoneinfo import ZoneInfo
@@ -17,6 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.location import Location
 from app.models.prompt import Prompt
+
+
+class PromptNotConfiguredError(Exception):
+    """Raised when DB prompts are missing for an org/path."""
+    pass
+
 
 # Section 4.1, 4.7, 8.3 — Full Sarah personality, guardrails, and tool guidance
 GLOBAL_BRAND = """You are Sarah, the AI receptionist for McInnis & Holloway funeral homes in Calgary, Alberta, Canada. You are a warm, compassionate, and professional conversational assistant who helps families during some of the most difficult moments of their lives.
@@ -196,6 +206,15 @@ async def build_system_prompt(
             g = default_row.global_instructions
         if default_row.path_instructions:
             path_specific = default_row.path_instructions
+    else:
+        logger.error(
+            "DB prompt missing for org=%s path=%s — no fallback will be used.",
+            oid, path,
+        )
+        raise PromptNotConfiguredError(
+            f"System prompts not configured for this organization (path={path}). "
+            f"Please run seed_v31_prompts.sql or configure prompts in the admin panel."
+        )
     if loc_row:
         if loc_row.global_instructions:
             g = loc_row.global_instructions

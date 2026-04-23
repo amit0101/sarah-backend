@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from app.api.schemas import ChatMessageIn, ChatMessageOut, MessageRow
+from app.conversation_engine.prompt_manager import PromptNotConfiguredError
 from app.database.session import DbSession
 from app.models.contact import Contact
 from app.models.conversation import Conversation
@@ -20,6 +21,15 @@ from app.services.conversation_service import ConversationService
 from app.services.location_resolve import get_location_by_org_slug
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+SYSTEM_DOWN_MESSAGE = (
+    "I'm sorry, I'm temporarily unable to assist right now. "
+    "Our team is working to get me back up and running as soon as possible.\n\n"
+    "In the meantime, please don't hesitate to reach us directly:\n\n"
+    "📞 **Phone:** (403) 243-8200 (available 24/7)\n"
+    "📱 **Text:** (403) 256-9575\n\n"
+    "A member of our caring team will be happy to help you."
+)
 
 
 @router.post("/message", response_model=ChatMessageOut)
@@ -67,6 +77,13 @@ async def post_message(body: ChatMessageIn, db: DbSession) -> ChatMessageOut:
             channel="webchat",
         )
         await db.commit()
+    except PromptNotConfiguredError:
+        logging.getLogger(__name__).error("Prompts not configured for conv=%s", conv_id)
+        return ChatMessageOut(
+            conversation_id=conv_id,
+            reply=SYSTEM_DOWN_MESSAGE,
+            responded=True,
+        )
     except Exception:
         logging.getLogger(__name__).exception("REST chat turn failed conv=%s", conv_id)
         raise HTTPException(
