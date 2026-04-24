@@ -22,7 +22,13 @@ async def create_contact(
     tags: Optional[list[str]] = None,
     custom_fields: Optional[list[dict[str, Any]]] = None,
     source: Optional[str] = None,
+    assigned_to: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Create a GHL contact. `assigned_to` is a GHL user ID (e.g. from
+    location.config['default_assigned_user_id']). Setting this ensures
+    the Opportunity Stage-Based Notifications workflow can send 'assigned
+    user' internal notifications — without it those steps are silently
+    skipped for every Sarah-originated contact."""
     body: Dict[str, Any] = {"locationId": location_id}
     if name:
         body["name"] = name
@@ -40,6 +46,8 @@ async def create_contact(
         body["customFields"] = custom_fields
     if source:
         body["source"] = source
+    if assigned_to:
+        body["assignedTo"] = assigned_to
     return await client.request("POST", "/contacts/", location_id=location_id, json_body=body)
 
 

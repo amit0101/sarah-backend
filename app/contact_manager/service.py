@@ -93,6 +93,14 @@ class ContactService:
                 )
         else:
             tags: list[str] = []
+            # Assign a default staff member on creation so GHL workflows that
+            # use 'notification for assigned user' don't silently skip.
+            # Config key: location.config['default_assigned_user_id'] (GHL user ID string).
+            default_user_id: Optional[str] = (
+                (location.config or {}).get("default_assigned_user_id")
+                if location.config
+                else None
+            )
             body = await ghl_contacts.create_contact(
                 self._ghl,
                 location_id=ghl_loc,
@@ -104,6 +112,7 @@ class ContactService:
                 tags=tags,
                 custom_fields=custom_fields,
                 source=source_channel,
+                assigned_to=default_user_id,
             )
             ghl_id = str(body.get("contact", {}).get("id") or body.get("id") or "")
 
