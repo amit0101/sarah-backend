@@ -498,6 +498,19 @@ class SarahToolRunner:
                 )
                 return json.dumps({"ok": False, "error": "booking failed"})
 
+            # Apply `appointment_booked_sarah` tag so the GHL confirmation
+            # workflow (which triggers on this tag, not on `customer_appointment`
+            # — that trigger does not fire for API-created appointments where
+            # source="third_party") sends the confirmation email + SMS.
+            if ghl_contact_id:
+                try:
+                    await ghl_tags.add_tags(
+                        ctx.ghl, ghl_contact_id, location_id=ghl_loc,
+                        tags=["appointment_booked_sarah"],
+                    )
+                except Exception as e:
+                    logger.warning("Failed to apply appointment_booked_sarah tag: %s", e)
+
             await ctx.dispatcher.emit(
                 "appointment.booked",
                 {
@@ -558,6 +571,7 @@ class SarahToolRunner:
         ghl_cal_id = ctx.location.ghl_calendar_id
         ghl_loc = self._ghl_scope(ctx)
         cid = ctx.contact.ghl_contact_id
+        ghl_appt_ok = False
         if ghl_cal_id and cid:
             try:
                 await ghl_cal.create_appointment(
@@ -570,8 +584,21 @@ class SarahToolRunner:
                     title=summary,
                     notes=description,
                 )
+                ghl_appt_ok = True
             except Exception as e:
                 logger.warning("GHL appointment sync failed: %s", e)
+
+        # Apply `appointment_booked_sarah` tag to trigger the GHL confirmation
+        # workflow (tag-based trigger avoids the `customer_appointment` trigger
+        # not firing for API-created appointments — see typed-pool branch above).
+        if ghl_appt_ok and cid:
+            try:
+                await ghl_tags.add_tags(
+                    ctx.ghl, cid, location_id=ghl_loc,
+                    tags=["appointment_booked_sarah"],
+                )
+            except Exception as e:
+                logger.warning("Failed to apply appointment_booked_sarah tag: %s", e)
 
         # Write canonical sarah.appointments row so the booking surfaces
         # in the comms platform calendar page (and any future reports).
