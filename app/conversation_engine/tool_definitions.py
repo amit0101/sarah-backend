@@ -265,6 +265,45 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
                 "additionalProperties": False,
             },
         },
+        # Phase B — proactive SMS continuation
+        # See PROMPT_AND_TOOL_CHANGES_2026-04-18.md §"Phase B — Proactive continuation tool"
+        {
+            "type": "function",
+            "name": "continue_on_sms",
+            "strict": True,
+            "description": (
+                "Proactively continue this webchat conversation over SMS. Call ONLY after "
+                "the visitor has explicitly agreed to continue by text AND a phone number "
+                "is on file (via create_contact). Sends an opening text from the M&H number, "
+                "flips the conversation channel to SMS so any later replies land in the same "
+                "thread, and writes a handover row visible in the staff inbox. Idempotent — "
+                "calling twice on the same conversation is a no-op. Do NOT call this for "
+                "at-need conversations (escalate to staff instead) or before providing value."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "phone": {
+                        "type": "string",
+                        "description": (
+                            "Visitor's phone in E.164 format (e.g. +14035551234). MUST match "
+                            "the phone already captured on the contact via create_contact."
+                        ),
+                    },
+                    "consent_text": {
+                        "type": "string",
+                        "description": (
+                            "The exact CASL consent line the visitor agreed to in this turn. "
+                            "Logged for compliance audit. Example: 'By sharing your number, "
+                            "you're consenting to receive text messages from McInnis & Holloway "
+                            "— standard rates may apply, reply STOP to opt out.'"
+                        ),
+                    },
+                },
+                "required": ["phone", "consent_text"],
+                "additionalProperties": False,
+            },
+        },
         # Section 2.5 / 4.2 — AI-driven topic switching replaces keyword detection
         {
             "type": "function",

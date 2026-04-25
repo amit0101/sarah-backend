@@ -22,7 +22,9 @@ from app.models.calendar import Calendar
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.models.location import Location
+from app.models.message import Message
 from app.models.organization import Organization
+from app.sms.service import SmsProvider, SmsService
 from app.notifications.service import NotificationService
 from app.obituary_client.client import TributeCenterClient
 from app.calendar_client.google_adapter import GoogleCalendarAdapter
@@ -92,6 +94,8 @@ class SarahToolRunner:
             return await self._resolve_area(ctx, args)
         if name == "switch_conversation_path":
             return await self._switch_path(ctx, args)
+        if name == "continue_on_sms":
+            return await self._continue_on_sms(ctx, args)
         return json.dumps({"ok": False, "error": f"unknown tool {name}"})
 
     def _ghl_scope(self, ctx: ToolContext) -> str:
@@ -925,3 +929,118 @@ class SarahToolRunner:
         return json.dumps(
             {"ok": True, "previous_path": old_path, "new_path": new_path, "reason": reason}
         )
+
+    async def _continue_on_sms(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
+        """Phase B — proactive SMS continuation.
+
+        Sends an opening text from the M&H Twilio number, flips the conversation
+        channel to SMS so any later replies land in the same thread, and writes
+        an assistant `sms` message row so the comms-platform inbox renders the
+        channel-switch divider.
+
+        Idempotent: if conv.channel is already 'sms', returns ok without re-sending.
+        Spec: PROMPT_AND_TOOL_CHANGES_2026-04-18.md §"Phase B — Proactive continuation tool".
+        """
+        phone = self._opt_str(args.get("phone"))
+        consent_text = self._opt_str(args.get("consent_text")) or ""
+
+        # Guard 1: phone must be present and match the contact's captured phone.
+        if not phone:
+            return json.dumps({
+                "ok": False,
+                "error": "missing_phone",
+                "message": "Need the visitor's phone number. Ask for it and call create_contact first.",
+            })
+        contact_phone = (ctx.contact.phone or "").strip()
+        if not contact_phone:
+            return json.dumps({
+                "ok": False,
+                "error": "no_contact_phone",
+                "message": "Phone is not on file. Call create_contact with the phone number first, then try again.",
+            })
+        if contact_phone != phone:
+            logger.warning(
+                "continue_on_sms phone mismatch conv=%s contact_phone=%s arg_phone=%s",
+                ctx.conversation.id, contact_phone[:6] + "...", phone[:6] + "...",
+            )
+            return json.dumps({
+                "ok": False,
+                "error": "phone_mismatch",
+                "message": (
+                    "The phone you passed doesn't match the one on the contact record. "
+                    "Use the phone exactly as captured by create_contact."
+                ),
+            })
+
+        # Guard 2: idempotent — already on SMS.
+        if ctx.conversation.channel == "sms":
+            return json.dumps({
+                "ok": True,
+                "already_on_sms": True,
+                "message": "Conversation is already on SMS; no action taken.",
+            })
+
+        # Guard 3: CASL — consent_text must be non-empty (audit trail).
+        if not consent_text.strip():
+            return json.dumps({
+                "ok": False,
+                "error": "missing_consent",
+                "message": "consent_text is required for CASL audit. Pass the exact line the visitor agreed to.",
+            })
+
+        # Build opening text. Keep under 160 chars where possible to stay 1 segment.
+        full_name = (ctx.contact.name or "").strip()
+        first_name = full_name.split()[0] if full_name else "there"
+        body = (
+            f"Hi {first_name}, this is Sarah from McInnis & Holloway — continuing our chat here. "
+            f"Reply anytime, or STOP to opt out."
+        )
+
+        # Send via Twilio. Provider hint reserved for future GHL Lead Connector path.
+        sms = SmsService()
+        try:
+            sms_sid = await sms.send(phone, body, provider=SmsProvider.TWILIO)
+        except Exception as e:
+            logger.error("continue_on_sms Twilio send failed conv=%s err=%s", ctx.conversation.id, e)
+            return json.dumps({
+                "ok": False,
+                "error": "sms_send_failed",
+                "message": "Could not send the opening SMS. Conversation channel was NOT flipped.",
+            })
+
+        if not sms_sid:
+            # Twilio not configured — log but don't flip channel (would silently break replies).
+            logger.warning(
+                "continue_on_sms: SmsService returned no sid (Twilio not configured?) conv=%s",
+                ctx.conversation.id,
+            )
+            return json.dumps({
+                "ok": False,
+                "error": "sms_provider_not_configured",
+                "message": "Twilio is not configured on this environment; cannot continue on SMS.",
+            })
+
+        # Flip channel + log handover message row (visible in comms-platform inbox).
+        ctx.conversation.channel = "sms"
+        ctx.db.add(Message(
+            id=uuid.uuid4(),
+            conversation_id=ctx.conversation.id,
+            role="assistant",
+            content=body,
+            channel="sms",
+        ))
+        await ctx.db.flush()
+
+        logger.info(
+            "continue_on_sms ok conv=%s contact=%s sid=%s consent_len=%d",
+            ctx.conversation.id, ctx.contact.id, sms_sid, len(consent_text),
+        )
+        return json.dumps({
+            "ok": True,
+            "sms_sid": sms_sid,
+            "channel": "sms",
+            "message": (
+                "Opening SMS sent and conversation flipped to SMS. The visitor can close this "
+                "window; any replies will land in the same thread."
+            ),
+        })
