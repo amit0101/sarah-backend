@@ -44,8 +44,11 @@ from app.models.calendar import Calendar
 from app.models.contact import Contact
 from app.models.organization import Organization
 from app.services.scheduling import (
+    PRIORITY_DIRECTORS,
+    apply_priority_order,
     available_slots,
     filter_counselors_for_region,
+    is_strict_territory_slot,
     location_region,
     parse_counselor_from_event,
 )
@@ -399,7 +402,28 @@ async def _propose_at_need(
     venue_calendar_google_id: Optional[str],
     flags: FeatureFlags,
 ) -> List[SlotProposal]:
-    """At-need = today/tomorrow arrangement conferences with on-shift Primaries."""
+    """At-need slot proposals against fixed 09:00 / 12:15 / 15:00 grid.
+
+    Routing rules from `mh_venues_brief.html` (2026-04-25):
+      Rule 1 (territory).        9am bookings must use a director whose tag
+                                 matches the location's territory (N or S).
+      Rule 2 (continuity).       12:15 / 15:00 prefer the director who was at
+                                 this same site in their previous slot;
+                                 otherwise any available director works.
+      Rule 3 (priority director). For North at-need, Aaron Beck is preferred
+                                 first when he is on shift and free. Lives
+                                 in `scheduling.PRIORITY_DIRECTORS`.
+      Rule 4 (venue auto-pick).  When `room_calendars_enabled`, pick the
+                                 lowest-numbered free venue at the requested
+                                 site (PM-1 → PM-2 → ...). The brief uses
+                                 anonymous slot codes; the spreadsheet caps
+                                 concurrent bookings via venue count, not
+                                 named rooms.
+
+    The pre-need flow (`_propose_pre_need`) does NOT participate in any of
+    this — pre-arrangers book against their own calendars only, no venue
+    cap, no fixed slot grid. See APPOINTMENTS_ARCHITECTURE.md §3.2.
+    """
 
     # Step 1 — read the Primaries roster (events-as-availability, convention A).
     roster_cal = await _single_calendar_of_kind(
@@ -415,41 +439,99 @@ async def _propose_at_need(
     if not on_shift_names:
         return []
 
-    # Filter to the region matching the requested location (legacy routing rules).
+    # Step 2 — split on-shift directors by territory tag.
     region = location_region(location_slug)
-    if region != "unknown":
-        on_shift_names = filter_counselors_for_region(on_shift_names, region)
-        if not on_shift_names:
-            return []
+    if region == "unknown":
+        territory_match: List[str] = list(on_shift_names)
+        territory_other: List[str] = []
+    else:
+        territory_match = filter_counselors_for_region(on_shift_names, region)
+        territory_other = [n for n in on_shift_names if n not in territory_match]
 
-    # Step 2 — resolve those Primary calendars (convention B = events-as-busy).
+    # Step 3 — resolve Primary calendar rows for everyone on shift today
+    # (we may need both pools depending on the slot rule).
     primary_cals = await _primary_calendars_by_label(db, organization.id, on_shift_names)
-    if not primary_cals:
+    primary_cals_by_label = {c.name: c for c in primary_cals}
+    if not primary_cals_by_label:
         return []
 
-    # Step 3 — venue calendar (only if feature flag is on AND a venue is requested).
-    venue_cal: Optional[Calendar] = None
-    if flags.room_calendars_enabled and venue_calendar_google_id:
-        venue_cal = await _calendar_by_google_id(db, organization.id, venue_calendar_google_id)
+    # Step 4 — venue candidates at this location, lowest-numbered first.
+    # Loaded once and reused per slot for the cheapest auto-pick (rule 4).
+    venue_cals_at_site: List[Calendar] = []
+    if flags.room_calendars_enabled:
+        venue_cals_at_site = await _venue_calendars_at_location(
+            db, organization.id, location_slug
+        )
 
-    # Step 4 — compute mutually-free candidate starts.
-    candidates = _candidate_starts_for(location_slug, window_start, tz)
+    # Step 5 — iterate the fixed slot grid in chronological order so we can
+    # apply the 12:15/15:00 continuity rule (rule 2) using the previous
+    # slot's chosen director.
     proposals: List[SlotProposal] = []
+    last_primary_at_site: Optional[str] = None
 
-    for start_local in candidates:
+    for hhmm in available_slots(location_slug):
+        try:
+            hour, minute = (int(p) for p in hhmm.split(":"))
+        except ValueError:
+            continue
+        start_local = window_start.replace(
+            hour=hour, minute=minute, second=0, microsecond=0
+        )
         end_local = start_local + duration
         if end_local > window_end:
             continue
 
+        # Build the ordered candidate-director list per slot (rules 1–3).
+        eligible_names = _ordered_directors_for_slot(
+            hhmm=hhmm,
+            region=region,
+            territory_match=territory_match,
+            territory_other=territory_other,
+            last_primary_at_site=last_primary_at_site,
+        )
+        eligible_cals = [
+            primary_cals_by_label[n]
+            for n in eligible_names
+            if n in primary_cals_by_label
+        ]
+        if not eligible_cals:
+            continue
+
         chosen_primary = await _first_free_primary(
-            calendar, primary_cals, start_local, end_local
+            calendar, eligible_cals, start_local, end_local
         )
         if chosen_primary is None:
             continue
 
-        if venue_cal is not None:
-            if not await _is_free(calendar, venue_cal.google_id, start_local, end_local):
+        # Venue selection (rule 4).
+        chosen_venue: Optional[Calendar] = None
+        if flags.room_calendars_enabled:
+            if not venue_cals_at_site:
+                # Flag is on but no venues seeded at this location — fail
+                # closed rather than offer a slot we can't actually hold.
+                logger.warning(
+                    "at_need_no_venues_seeded org=%s location=%s",
+                    organization.id,
+                    location_slug,
+                )
                 continue
+            chosen_venue = await _first_free_primary(
+                calendar, venue_cals_at_site, start_local, end_local
+            )
+            if chosen_venue is None:
+                # All venues at this site are booked at this slot.
+                continue
+        elif venue_calendar_google_id:
+            # Caller pinned a specific venue (e.g. comms-platform manual booker
+            # before the room-calendars flag flips). Honour the pin.
+            v = await _calendar_by_google_id(
+                db, organization.id, venue_calendar_google_id
+            )
+            if v is None or not await _is_free(
+                calendar, v.google_id, start_local, end_local
+            ):
+                continue
+            chosen_venue = v
 
         proposals.append(
             SlotProposal(
@@ -457,14 +539,55 @@ async def _propose_at_need(
                 ends_at=end_local,
                 primary_calendar_id=chosen_primary.google_id,
                 primary_label=chosen_primary.name,
-                venue_calendar_id=(venue_cal.google_id if venue_cal else None),
-                venue_label=(venue_cal.name if venue_cal else None),
+                venue_calendar_id=(chosen_venue.google_id if chosen_venue else None),
+                venue_label=(chosen_venue.name if chosen_venue else None),
             )
         )
+        last_primary_at_site = chosen_primary.name
         if len(proposals) >= max_slots:
             break
 
     return proposals
+
+
+def _ordered_directors_for_slot(
+    *,
+    hhmm: str,
+    region: str,
+    territory_match: List[str],
+    territory_other: List[str],
+    last_primary_at_site: Optional[str],
+) -> List[str]:
+    """Return directors ordered by preference for a single slot.
+
+    9am (strict territory) — only territory-matching directors are eligible.
+    Within the eligible set, priority directors (e.g. Aaron Beck for North
+    at-need) move to the front.
+
+    12:15 / 15:00 (continuity) — same-site continuity director first (when
+    they're still on shift), then territory-match directors, then any other
+    on-shift director as a fallback. Priority directors apply within the
+    territory-match group.
+    """
+    priority = PRIORITY_DIRECTORS.get((region, "at_need"), [])
+
+    if is_strict_territory_slot(hhmm):
+        return apply_priority_order(territory_match, priority)
+
+    # 12:15 / 15:00 — continuity first, then territory-match, then other.
+    ordered: List[str] = []
+    if last_primary_at_site and last_primary_at_site in (
+        territory_match + territory_other
+    ):
+        ordered.append(last_primary_at_site)
+
+    for name in apply_priority_order(territory_match, priority):
+        if name not in ordered:
+            ordered.append(name)
+    for name in territory_other:
+        if name not in ordered:
+            ordered.append(name)
+    return ordered
 
 
 # ─── Pre-need flow (APPOINTMENTS_ARCHITECTURE.md §3.2) ────────────────────────
@@ -616,6 +739,36 @@ async def _primary_calendars_by_label(
         Calendar.name.in_(label_set),
     )
     return list((await db.execute(stmt)).scalars().all())
+
+
+async def _venue_calendars_at_location(
+    db: AsyncSession, organization_id: Any, location_slug: str
+) -> List[Calendar]:
+    """Return active venue calendars at a site, ordered by name.
+
+    Per the venue brief, venue calendars use anonymous codes like `PM-1`,
+    `PM-2`, ..., `CH-1`, ... Ordering by `Calendar.name` therefore yields
+    "lowest-numbered free venue first" — exactly the auto-pick rule we want.
+
+    Each venue row is expected to carry `metadata.location_slug = '<slug>'`
+    set at seed time. If the seed step ever switches to multi-location
+    venues (a venue serving more than one site), broaden this query to
+    `location_slugs []` and adjust the comparison accordingly.
+    """
+    # Filter the slug in Python so this query is portable across the
+    # Postgres prod backend (JSONB) and the SQLite test backend (JSON).
+    # 22 venue rows total — the in-memory filter is free.
+    stmt = (
+        select(Calendar)
+        .where(
+            Calendar.organization_id == organization_id,
+            Calendar.kind == "venue",
+            Calendar.active.is_(True),
+        )
+        .order_by(Calendar.name)
+    )
+    rows = list((await db.execute(stmt)).scalars().all())
+    return [r for r in rows if (r.metadata_ or {}).get("location_slug") == location_slug]
 
 
 async def _calendar_by_google_id(

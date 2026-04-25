@@ -26,8 +26,19 @@ COUNSELOR_REGION: Dict[str, str] = {
 
 STANDARD_SLOTS = ["09:00", "12:15", "15:00"]
 
-REDUCED_HOURS_LOCATIONS = frozenset({"airdrie", "cochrane"})
-REDUCED_SLOTS = ["10:00", "12:15"]
+# Slots where the director MUST match the location's territory tag (N or S).
+# Per `mh_venues_brief.html` §02 (2026-04-25): only the 9am at-need slot is
+# strict; 12:15 and 15:00 prefer same-location continuity but accept any
+# available director if continuity isn't possible.
+STRICT_TERRITORY_SLOTS = frozenset({"09:00"})
+
+# Priority directors per (region, intent) tuple — the booking algorithm tries
+# these names first when the slot allows them. Currently only the brief's
+# rule 8: "Aaron Beck takes North at-need first when available." When the
+# full roster lands from Jeff, expand keys here (e.g. ("south", "at_need")).
+PRIORITY_DIRECTORS: Dict[tuple[str, str], List[str]] = {
+    ("north", "at_need"): ["Aaron B."],
+}
 
 
 def location_region(location_slug: str) -> str:
@@ -39,9 +50,31 @@ def location_region(location_slug: str) -> str:
 
 
 def available_slots(location_slug: str) -> List[str]:
-    if location_slug in REDUCED_HOURS_LOCATIONS:
-        return REDUCED_SLOTS
+    """Return the fixed at-need slot grid for this location.
+
+    Per the venue brief, every site uses the same 09:00 / 12:15 / 15:00 grid
+    (including Airdrie and Cochrane — the previous "REDUCED_SLOTS" model was
+    based on a now-superseded guess). The function still accepts a location
+    slug for forward-compat (e.g. if ops later cuts back hours at one site).
+    """
+    del location_slug  # unused — preserved for callers
     return STANDARD_SLOTS
+
+
+def is_strict_territory_slot(hhmm: str) -> bool:
+    """True iff a director's territory tag must match the location's territory."""
+    return hhmm in STRICT_TERRITORY_SLOTS
+
+
+def apply_priority_order(names: List[str], priority: List[str]) -> List[str]:
+    """Return `names` with `priority`-listed names moved to the front.
+
+    Order within each group is preserved; names absent from `priority` keep
+    their original relative order, names in `priority` keep theirs.
+    """
+    head = [n for n in priority if n in names]
+    tail = [n for n in names if n not in head]
+    return head + tail
 
 
 def parse_counselor_from_event(summary: str) -> Optional[str]:
