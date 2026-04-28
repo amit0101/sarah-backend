@@ -40,14 +40,19 @@ ORG_SLUG = "mhc"
 
 EXPECTED: Dict[str, Dict[str, Any]] = {
     "park_memorial": {
-        "primary": "McKenzi S.",
-        "primary_alt": ["McKenzi", "S."],
+        # On a real M&H roster Stephanie Hu./McKenzi/Sharon/Stephanie Ho. are
+        # all valid south-tagged 9am picks. We assert "any south-tagged
+        # director surfaced" by listing the full pool here.
+        "primary_pool": [
+            "Stephanie Hu.", "McKenzi S.", "Sharon K.", "Jillian G.",
+        ],
         "slot_times": ["9:00", "12:15", "3:00"],
         "location_alt": ["Park Memorial"],
     },
     "chapel_of_the_bells": {
-        "primary": "Aaron B.",
-        "primary_alt": ["Aaron"],
+        "primary_pool": [
+            "Aaron B.", "Ashley R.", "Stephanie Ho.", "Terra S.",
+        ],
         "slot_times": ["9:00", "12:15", "3:00"],
         "location_alt": ["Chapel of the Bells", "Chapel"],
     },
@@ -127,9 +132,27 @@ async def _fetch_function_calls(conversation_id: UUID) -> List[Dict[str, Any]]:
 def _verify_reply_text(combined_text: str, expected: Dict[str, Any]) -> List[str]:
     errors: List[str] = []
     haystack = combined_text.lower()
-    primary_tokens = [expected["primary"]] + (expected.get("primary_alt") or [])
-    if not any(tok.lower() in haystack for tok in primary_tokens):
-        errors.append(f"none of {primary_tokens} appears in Sarah's reply")
+    pool = expected.get("primary_pool") or []
+
+    def _name_variants(name: str) -> List[str]:
+        """Director names like 'Stephanie Hu.' carry a literal trailing period
+        that the LLM frequently drops in natural language ('Stephanie Hu').
+        Accept either form."""
+        n = name.lower().strip()
+        out = [n]
+        if n.endswith("."):
+            out.append(n.rstrip(".").rstrip())
+        return out
+
+    matched = [
+        name for name in pool
+        if any(v in haystack for v in _name_variants(name))
+    ]
+    if not matched:
+        errors.append(
+            f"none of {pool} appears in Sarah's reply (expected one director "
+            "name to be surfaced as the primary for these slots)"
+        )
     slot_hits = sum(1 for t in expected["slot_times"] if t in combined_text)
     if slot_hits < 2:
         errors.append(
@@ -205,8 +228,13 @@ async def run_one(base: str, location: str) -> bool:
         for e in errors:
             print(f"     - {e}")
         return False
-    print(f"   ✓ PASS — check_calendar was called and Sarah surfaced "
-          f"the expected primary + slot times for {location}")
+    haystack = combined.lower()
+    surfaced = [
+        n for n in (expected.get("primary_pool") or [])
+        if n.lower() in haystack or n.lower().rstrip(".").rstrip() in haystack
+    ]
+    print(f"   ✓ PASS — check_calendar was called; surfaced director(s)={surfaced} "
+          f"and slot times for {location}")
     return True
 
 

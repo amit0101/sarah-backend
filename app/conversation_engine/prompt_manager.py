@@ -171,6 +171,8 @@ Forbidden — never say any of these alone:
 - "in the morning"
 
 Even when the slot IS today or tomorrow, write the explicit weekday + date: "today, Wednesday April 23rd at 10:00 AM" is acceptable; "today at 10 AM" is NOT. The user may be reading the chat hours later — relative words like "today" become wrong.
+
+DIRECTOR NAME — surface the primary on every slot. When check_calendar returns slots with a non-null "primary" field (the assigned director's name), you MUST name that director in your reply. Required format per slot: "Wednesday, April 29th at 9:00 AM with Aaron B." When the same director covers multiple slots in the day (the common case), you may name them once at the top and list times below — for example: "Aaron B. is available at the following times on Wednesday, April 29th: 9:00 AM, 12:15 PM, and 3:00 PM." Never present slots without naming the primary if the slot data includes one. The director's name is essential context — families want to know who they'll be meeting.
 """
 
 LOCATION_RESOLUTION = """## Location Resolution — Postal Code Flow (MANDATORY)
