@@ -219,6 +219,7 @@ async def get_calendar_availability(
     duration_minutes: int = Query(60, ge=15, le=480),
     timezone: str = Query("America/Edmonton"),
     venue_calendar_google_id: Optional[str] = Query(None),
+    booking_calendar_google_id: Optional[str] = Query(None),
     max_slots: int = Query(3, ge=1, le=20),
     organization_id: Optional[uuid.UUID] = Query(None),
     organization_slug: Optional[str] = Query(None),
@@ -226,11 +227,16 @@ async def get_calendar_availability(
 ) -> dict[str, Any]:
     """Run `cal_svc.propose_slots` and serialise the result.
 
-    Returns `{slots: []}` when no Primary calendars are seeded yet (the
-    expected shape during the dormant-feature-flag period).
+    For at-need M&H, callers should pass `booking_calendar_google_id` (the
+    shared director-bookings calendar — typically the location's calendar_id).
+    Returns `{slots: []}` when no roster is seeded yet.
     """
     _require_webhook_secret(x_webhook_secret)
     org = await _resolve_org(db, organization_id, organization_slug)
+
+    if not booking_calendar_google_id:
+        location = await db.get(Location, (org.id, location_slug))
+        booking_calendar_google_id = location.calendar_id if location else None
 
     proposals = await cal_svc.propose_slots(
         db=db,
@@ -242,6 +248,7 @@ async def get_calendar_availability(
         timezone=timezone,
         duration_minutes=duration_minutes,
         venue_calendar_google_id=venue_calendar_google_id,
+        booking_calendar_google_id=booking_calendar_google_id,
         max_slots=max_slots,
     )
     return {

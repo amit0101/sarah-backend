@@ -61,12 +61,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SlotProposal:
-    """One mutually-free candidate slot returned to the chat / staff UI."""
+    """One mutually-free candidate slot returned to the chat / staff UI.
+
+    `primary_calendar_id` is the Google calendar where the booking event will be
+    written. In M&H's operating model this is a single shared calendar
+    (j.hagel@mhfh.com) for ALL Primary at-need bookings; per-director busy state
+    is derived by parsing event titles for the director's name. The pre-need
+    flow keeps the original per-pre-arranger calendar semantics (one calendar
+    per pre-arranger).
+    """
 
     starts_at: datetime
     ends_at: datetime
-    primary_calendar_id: str          # Google calendar id of the chosen Primary/Pre-arranger
-    primary_label: str                # Human-readable name for confirmation copy
+    primary_calendar_id: str          # Google calendar id where the booking is written
+    primary_label: str                # Human-readable name for confirmation copy + busy match
     venue_calendar_id: Optional[str] = None     # Set only when room calendars enabled (at-need)
     venue_label: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -105,12 +113,17 @@ async def propose_slots(
     timezone: str = "America/Edmonton",
     duration_minutes: int = 60,
     venue_calendar_google_id: Optional[str] = None,   # at-need: which venue does the family want
+    booking_calendar_google_id: Optional[str] = None, # at-need: shared calendar where Primary bookings are written
     max_slots: int = 3,
 ) -> List[SlotProposal]:
     """Top-level entry: return up to `max_slots` mutually-free proposals.
 
     Routes to at-need or pre-need flow based on `intent` and the org's
     `pre_arrangers_enabled` flag. See APPOINTMENTS_ARCHITECTURE.md §3.1/§3.2.
+
+    `booking_calendar_google_id` (at-need only) is M&H's shared director-bookings
+    calendar (j.hagel@mhfh.com). Per-director busy state is derived from event
+    titles on this calendar; without it the at-need flow returns no slots.
     """
 
     flags = FeatureFlags.from_org(organization)
@@ -142,6 +155,7 @@ async def propose_slots(
         tz=tz,
         max_slots=max_slots,
         venue_calendar_google_id=venue_calendar_google_id,
+        booking_calendar_google_id=booking_calendar_google_id,
         flags=flags,
     )
 
@@ -400,6 +414,7 @@ async def _propose_at_need(
     tz: ZoneInfo,
     max_slots: int,
     venue_calendar_google_id: Optional[str],
+    booking_calendar_google_id: Optional[str],
     flags: FeatureFlags,
 ) -> List[SlotProposal]:
     """At-need slot proposals against fixed 09:00 / 12:15 / 15:00 grid.
@@ -419,6 +434,14 @@ async def _propose_at_need(
                                  anonymous slot codes; the spreadsheet caps
                                  concurrent bookings via venue count, not
                                  named rooms.
+
+    Director-busy semantics — M&H operating model:
+      All Primary at-need bookings are written to a single shared calendar
+      (j.hagel@mhfh.com) with the director's name in the event title (e.g.
+      "Arrangement — Smith Family with Aaron B. at Chapel Of The Bells").
+      To check whether a director is busy at a slot we list events on the
+      shared booking calendar in the slot window and substring-match the
+      director's name in summary / description.
 
     The pre-need flow (`_propose_pre_need`) does NOT participate in any of
     this — pre-arrangers book against their own calendars only, no venue
@@ -448,11 +471,15 @@ async def _propose_at_need(
         territory_match = filter_counselors_for_region(on_shift_names, region)
         territory_other = [n for n in on_shift_names if n not in territory_match]
 
-    # Step 3 — resolve Primary calendar rows for everyone on shift today
-    # (we may need both pools depending on the slot rule).
-    primary_cals = await _primary_calendars_by_label(db, organization.id, on_shift_names)
-    primary_cals_by_label = {c.name: c for c in primary_cals}
-    if not primary_cals_by_label:
+    # Step 3 — we need a shared booking calendar to look up per-director busy
+    # state. Without it the typed-pool path can't proceed (the legacy fallback
+    # in sarah_tools handles unconfigured orgs).
+    if not booking_calendar_google_id:
+        logger.warning(
+            "at_need_no_booking_calendar org=%s location=%s",
+            organization.id,
+            location_slug,
+        )
         return []
 
     # Step 4 — venue candidates at this location, lowest-numbered first.
@@ -489,18 +516,21 @@ async def _propose_at_need(
             territory_other=territory_other,
             last_primary_at_site=last_primary_at_site,
         )
-        eligible_cals = [
-            primary_cals_by_label[n]
-            for n in eligible_names
-            if n in primary_cals_by_label
-        ]
-        if not eligible_cals:
+        if not eligible_names:
             continue
 
-        chosen_primary = await _first_free_primary(
-            calendar, eligible_cals, start_local, end_local
+        # Per-director busy via shared booking calendar (one API call per slot).
+        busy_directors = await _busy_directors_in_window(
+            calendar=calendar,
+            booking_calendar_google_id=booking_calendar_google_id,
+            candidate_names=eligible_names,
+            window_start=start_local,
+            window_end=end_local,
         )
-        if chosen_primary is None:
+        chosen_primary_name = next(
+            (n for n in eligible_names if n not in busy_directors), None
+        )
+        if chosen_primary_name is None:
             continue
 
         # Venue selection (rule 4).
@@ -537,13 +567,13 @@ async def _propose_at_need(
             SlotProposal(
                 starts_at=start_local,
                 ends_at=end_local,
-                primary_calendar_id=chosen_primary.google_id,
-                primary_label=chosen_primary.name,
+                primary_calendar_id=booking_calendar_google_id,
+                primary_label=chosen_primary_name,
                 venue_calendar_id=(chosen_venue.google_id if chosen_venue else None),
                 venue_label=(chosen_venue.name if chosen_venue else None),
             )
         )
-        last_primary_at_site = chosen_primary.name
+        last_primary_at_site = chosen_primary_name
         if len(proposals) >= max_slots:
             break
 
@@ -654,6 +684,55 @@ async def _on_shift_primaries(
         if name and name not in names:
             names.append(name)
     return names
+
+
+async def _busy_directors_in_window(
+    *,
+    calendar: CalendarClient,
+    booking_calendar_google_id: str,
+    candidate_names: Sequence[str],
+    window_start: datetime,
+    window_end: datetime,
+) -> set:
+    """Return the subset of `candidate_names` that have a booking event
+    overlapping `[window_start, window_end)` on the shared booking calendar.
+
+    M&H writes Primary bookings to a single shared calendar with the director's
+    name in the event title (e.g. "Arrangement — Smith Family with Aaron B. at
+    Chapel Of The Bells"). To detect "is this director busy at this slot" we
+    list events in the slot window and substring-match each candidate name
+    against the event summary + description.
+
+    The match is case-insensitive substring (not regex) for two reasons:
+      1. Director names contain a literal '.' (e.g. "Aaron B.") which would
+         escape oddly under a naive regex. Substring keeps the contract simple.
+      2. False positives are bounded by the candidate set — we never compare
+         against a name that isn't already on shift today.
+    """
+    if not candidate_names:
+        return set()
+    events = await calendar.list_events(
+        booking_calendar_google_id,
+        time_min_iso=window_start.isoformat(),
+        time_max_iso=window_end.isoformat(),
+    )
+    busy: set = set()
+    for ev in events:
+        haystack_parts = [
+            str(ev.get("summary") or ""),
+            str(ev.get("description") or ""),
+        ]
+        haystack = " ".join(haystack_parts).lower()
+        if not haystack.strip():
+            continue
+        for name in candidate_names:
+            if name in busy:
+                continue
+            if name.lower() in haystack:
+                busy.add(name)
+        if len(busy) == len(candidate_names):
+            break
+    return busy
 
 
 async def _is_free(

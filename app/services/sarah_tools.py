@@ -326,20 +326,38 @@ class SarahToolRunner:
     async def _has_seeded_primaries(
         self, ctx: ToolContext, *, kind: str = "primary"
     ) -> bool:
-        """True iff the org has at least one active sarah.calendars row of `kind`.
-
-        Drives the new-vs-legacy fallback in _check_calendar / _book_appointment.
-        While calendars are unseeded (current state, feature flags off) every
-        call short-circuits to the legacy single-calendar path, preserving
-        Sarah's pre-W3 behaviour. Once Jeff seeds Primary calendars (or the
-        room/pre-arranger flags flip), the new typed-pool path takes over —
-        no further code change required.
+        """Legacy gate retained for tests: true iff at least one active
+        sarah.calendars row of `kind` exists. Production now uses
+        `_typed_pool_active`, which is feature-flag + roster driven.
         """
-        from sqlalchemy import select as _select  # local import for clarity
+        from sqlalchemy import select as _select
 
         stmt = _select(Calendar.id).where(
             Calendar.organization_id == ctx.organization.id,
             Calendar.kind == kind,
+            Calendar.active.is_(True),
+        ).limit(1)
+        return (await ctx.db.execute(stmt)).first() is not None
+
+    async def _typed_pool_active(self, ctx: ToolContext) -> bool:
+        """True iff the new typed-pool at-need flow is enabled for this org.
+
+        Gates:
+          1. `feature_flags.room_calendars_enabled` is true on the organization.
+          2. A `kind='primaries_roster'` Calendar row exists (the shared roster
+             calendar that drives on-shift detection).
+
+        Director busy state is read from the location's shared booking calendar
+        (`location.calendar_id`); per-director Calendar rows are not required.
+        """
+        from sqlalchemy import select as _select
+
+        cfg = (ctx.organization.config or {}).get("feature_flags") or {}
+        if not bool(cfg.get("room_calendars_enabled", False)):
+            return False
+        stmt = _select(Calendar.id).where(
+            Calendar.organization_id == ctx.organization.id,
+            Calendar.kind == "primaries_roster",
             Calendar.active.is_(True),
         ).limit(1)
         return (await ctx.db.execute(stmt)).first() is not None
@@ -367,7 +385,8 @@ class SarahToolRunner:
             date_str = dt.isoformat()
 
         intent = self._intent_from_path(ctx)
-        use_new_path = await self._has_seeded_primaries(ctx)
+        use_new_path = await self._typed_pool_active(ctx)
+        booking_cal_id = ctx.location.calendar_id
 
         if use_new_path:
             try:
@@ -379,6 +398,7 @@ class SarahToolRunner:
                     location_slug=ctx.location.id,
                     target_date=dt,
                     timezone=tz_name,
+                    booking_calendar_google_id=booking_cal_id,
                 )
             except Exception:
                 logger.exception(

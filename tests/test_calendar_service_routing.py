@@ -4,6 +4,10 @@ We monkeypatch `calendar_service`'s DB helpers to return canned Calendar
 stand-ins, so these tests exercise the routing logic only — no SQLAlchemy
 schema needed (the existing test infra has no JSONB→JSON shim).
 
+Director busy state is driven by events on a single shared booking calendar
+(M&H's operating model); the FakeCalendarClient lets each test post events
+keyed by director name and slot time.
+
 Rules under test:
   R1  9am bookings filter to directors whose territory tag matches the site.
   R2  12:15 / 15:00 prefer same-site continuity from the previous slot.
@@ -17,12 +21,16 @@ import uuid
 from dataclasses import dataclass
 from datetime import date
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.services import calendar_service as cal_svc
+
+
+BOOKING_CAL_ID = "bookings@mh"
+ROSTER_CAL_ID = "roster@mh"
 
 
 # ─── Fakes ─────────────────────────────────────────────────────────────────────
@@ -35,7 +43,7 @@ class FakeCal:
 
     name: str
     google_id: str
-    kind: str = "primary"
+    kind: str = "venue"
     metadata_: Dict[str, Any] = None  # noqa: RUF012
 
     def __post_init__(self) -> None:
@@ -47,39 +55,50 @@ def _roster_event(name: str) -> Dict[str, Any]:
     return {"summary": f"Primaries - {name} - 8:45 AM to 5:15 PM"}
 
 
+def _booking_event(director: str, hhmm: str = "09:00") -> Dict[str, Any]:
+    """Synthesise a Sarah-style booking event title that names the director."""
+    return {
+        "summary": f"Arrangement — Smith Family with {director} at Chapel",
+        "start": {"dateTime": f"2026-05-04T{hhmm}:00-06:00"},
+        "end": {"dateTime": f"2026-05-04T{hhmm}:00-06:00"},
+    }
+
+
 class FakeCalendarClient:
     """Mocked Google adapter.
 
-    `roster_names`     — names returned by list_events on the roster cal.
-    `busy_calendars`   — google_ids that report busy regardless of window.
-    `partial_busy`     — fn(google_id, start_iso) -> bool, finer control.
+    Args:
+      roster_names      Names returned by list_events on the roster cal.
+      booking_events    fn(start_iso) -> list of booking events for the
+                        slot starting at start_iso. Used to drive
+                        per-director busy state by name match.
+      busy_calendars    google_ids returning busy from free_busy. Used by
+                        venue / pre-arranger calendars (not Primaries).
     """
 
     def __init__(
         self,
         *,
-        roster_google_id: str,
         roster_names: List[str],
-        busy_calendars: Optional[set] = None,
-        partial_busy=None,
+        booking_events: Optional[Callable[[str], List[Dict[str, Any]]]] = None,
+        busy_calendars: Optional[Set[str]] = None,
     ) -> None:
-        self.roster_google_id = roster_google_id
         self.roster_names = roster_names
+        self.booking_events = booking_events or (lambda _start: [])
         self.busy_calendars = busy_calendars or set()
-        self.partial_busy = partial_busy
         self.create_event = AsyncMock(return_value={"id": "evt-1"})
         self.update_event = AsyncMock(return_value={"id": "evt-1"})
         self.delete_event = AsyncMock(return_value=None)
 
     async def list_events(self, calendar_id, *, time_min_iso, time_max_iso):
-        if calendar_id == self.roster_google_id:
+        if calendar_id == ROSTER_CAL_ID:
             return [_roster_event(n) for n in self.roster_names]
+        if calendar_id == BOOKING_CAL_ID:
+            return self.booking_events(time_min_iso)
         return []
 
     async def free_busy(self, calendar_id, *, time_min_iso, time_max_iso, timezone):
         if calendar_id in self.busy_calendars:
-            return [{"start": time_min_iso, "end": time_max_iso}]
-        if self.partial_busy and self.partial_busy(calendar_id, time_min_iso):
             return [{"start": time_min_iso, "end": time_max_iso}]
         return []
 
@@ -104,38 +123,23 @@ def fake_org_no_rooms():
 def _patch_db_helpers(
     monkeypatch,
     *,
-    roster_google_id: str,
-    primaries: List[FakeCal],
     venues_by_site: Optional[Dict[str, List[FakeCal]]] = None,
 ):
     """Stub the SQLAlchemy helpers so no DB session is needed."""
     venues_by_site = venues_by_site or {}
 
-    roster = FakeCal(name="Roster", google_id=roster_google_id, kind="primaries_roster")
+    roster = FakeCal(
+        name="Roster", google_id=ROSTER_CAL_ID, kind="primaries_roster"
+    )
 
     async def fake_single_of_kind(db, org_id, *, kind):
         return roster if kind == "primaries_roster" else None
-
-    async def fake_primary_by_label(db, org_id, labels):
-        wanted = {l.strip() for l in labels}
-        return [p for p in primaries if p.name in wanted]
 
     async def fake_venues_at_location(db, org_id, location_slug):
         return venues_by_site.get(location_slug, [])
 
     monkeypatch.setattr(cal_svc, "_single_calendar_of_kind", fake_single_of_kind)
-    monkeypatch.setattr(cal_svc, "_primary_calendars_by_label", fake_primary_by_label)
     monkeypatch.setattr(cal_svc, "_venue_calendars_at_location", fake_venues_at_location)
-
-
-def _make_primaries(*names: str) -> List[FakeCal]:
-    return [
-        FakeCal(
-            name=n,
-            google_id=f"primary-{n.replace(' ', '_').replace('.', '').lower()}@mh",
-        )
-        for n in names
-    ]
 
 
 def _make_venues(slug: str, *codes: str) -> List[FakeCal]:
@@ -150,21 +154,36 @@ def _make_venues(slug: str, *codes: str) -> List[FakeCal]:
     ]
 
 
+def _busy_at(hhmm: str, *directors: str) -> Callable[[str], List[Dict[str, Any]]]:
+    """Return a booking_events callable that posts a busy event for each
+    director when the slot start matches `hhmm`."""
+
+    def _events(start_iso: str) -> List[Dict[str, Any]]:
+        if f"T{hhmm}:" in start_iso:
+            return [_booking_event(d, hhmm=hhmm) for d in directors]
+        return []
+
+    return _events
+
+
+def _always_busy(*directors: str) -> Callable[[str], List[Dict[str, Any]]]:
+    def _events(_start_iso: str) -> List[Dict[str, Any]]:
+        return [_booking_event(d) for d in directors]
+
+    return _events
+
+
 # ─── R3 — Aaron Beck priority for North 9am at-need ────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_north_9am_prefers_aaron_beck_when_on_shift(monkeypatch, fake_org):
-    primaries = _make_primaries("Terra S.", "Aaron B.", "Ashley R.")
     venues = _make_venues("chapel_of_the_bells", "CH-1", "CH-2", "CH-3")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"chapel_of_the_bells": venues},
     )
     cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
         roster_names=["Terra S.", "Aaron B.", "Ashley R."],
     )
 
@@ -175,26 +194,23 @@ async def test_north_9am_prefers_aaron_beck_when_on_shift(monkeypatch, fake_org)
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     assert slots
     nine = next(s for s in slots if s.starts_at.hour == 9)
     assert nine.primary_label == "Aaron B."
+    # Bookings are written to the shared calendar, not per-director:
+    assert nine.primary_calendar_id == BOOKING_CAL_ID
 
 
 @pytest.mark.asyncio
 async def test_north_9am_falls_back_when_aaron_off_shift(monkeypatch, fake_org):
-    primaries = _make_primaries("Terra S.", "Ashley R.")
     venues = _make_venues("chapel_of_the_bells", "CH-1")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"chapel_of_the_bells": venues},
     )
-    cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
-        roster_names=["Terra S.", "Ashley R."],
-    )
+    cal = FakeCalendarClient(roster_names=["Terra S.", "Ashley R."])
 
     slots = await cal_svc.propose_slots(
         db=None,
@@ -203,6 +219,7 @@ async def test_north_9am_falls_back_when_aaron_off_shift(monkeypatch, fake_org):
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     nine = next(s for s in slots if s.starts_at.hour == 9)
     assert nine.primary_label in {"Terra S.", "Ashley R."}
@@ -210,19 +227,14 @@ async def test_north_9am_falls_back_when_aaron_off_shift(monkeypatch, fake_org):
 
 @pytest.mark.asyncio
 async def test_north_9am_skips_aaron_when_busy(monkeypatch, fake_org):
-    primaries = _make_primaries("Terra S.", "Aaron B.", "Ashley R.")
     venues = _make_venues("chapel_of_the_bells", "CH-1")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"chapel_of_the_bells": venues},
     )
-    aaron_id = next(p.google_id for p in primaries if p.name == "Aaron B.")
     cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
         roster_names=["Terra S.", "Aaron B.", "Ashley R."],
-        busy_calendars={aaron_id},
+        booking_events=_always_busy("Aaron B."),
     )
 
     slots = await cal_svc.propose_slots(
@@ -232,6 +244,7 @@ async def test_north_9am_skips_aaron_when_busy(monkeypatch, fake_org):
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     nine = next(s for s in slots if s.starts_at.hour == 9)
     assert nine.primary_label == "Terra S."
@@ -243,16 +256,12 @@ async def test_north_9am_skips_aaron_when_busy(monkeypatch, fake_org):
 @pytest.mark.asyncio
 async def test_south_9am_excludes_north_directors(monkeypatch, fake_org):
     """South-territory site at 9am must not offer a North-tagged director."""
-    primaries = _make_primaries("Aaron B.", "McKenzi S.", "Jillian G.")
     venues = _make_venues("park_memorial", "PM-1", "PM-2", "PM-3", "PM-4")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"park_memorial": venues},
     )
     cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
         roster_names=["Aaron B.", "McKenzi S.", "Jillian G."],
     )
 
@@ -263,6 +272,7 @@ async def test_south_9am_excludes_north_directors(monkeypatch, fake_org):
         intent="at_need",
         location_slug="park_memorial",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     nine = next(s for s in slots if s.starts_at.hour == 9)
     assert nine.primary_label in {"McKenzi S.", "Jillian G."}
@@ -274,18 +284,12 @@ async def test_south_9am_excludes_north_directors(monkeypatch, fake_org):
 
 @pytest.mark.asyncio
 async def test_continuity_keeps_same_director_across_slots(monkeypatch, fake_org):
-    primaries = _make_primaries("Aaron B.", "Terra S.", "Ashley R.")
     venues = _make_venues("chapel_of_the_bells", "CH-1", "CH-2")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"chapel_of_the_bells": venues},
     )
-    cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
-        roster_names=["Aaron B.", "Terra S.", "Ashley R."],
-    )
+    cal = FakeCalendarClient(roster_names=["Aaron B.", "Terra S.", "Ashley R."])
 
     slots = await cal_svc.propose_slots(
         db=None,
@@ -294,6 +298,7 @@ async def test_continuity_keeps_same_director_across_slots(monkeypatch, fake_org
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     by_hour = {s.starts_at.hour: s.primary_label for s in slots}
     assert by_hour[9] == "Aaron B."
@@ -303,23 +308,15 @@ async def test_continuity_keeps_same_director_across_slots(monkeypatch, fake_org
 
 @pytest.mark.asyncio
 async def test_1215_falls_back_when_continuity_director_busy(monkeypatch, fake_org):
-    primaries = _make_primaries("Aaron B.", "Terra S.")
     venues = _make_venues("chapel_of_the_bells", "CH-1", "CH-2")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"chapel_of_the_bells": venues},
     )
-    aaron_id = next(p.google_id for p in primaries if p.name == "Aaron B.")
-
-    def aaron_busy_only_at_1215(google_id, start_iso):
-        return google_id == aaron_id and "T12:15" in start_iso
 
     cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
         roster_names=["Aaron B.", "Terra S."],
-        partial_busy=aaron_busy_only_at_1215,
+        booking_events=_busy_at("12:15", "Aaron B."),
     )
 
     slots = await cal_svc.propose_slots(
@@ -329,6 +326,7 @@ async def test_1215_falls_back_when_continuity_director_busy(monkeypatch, fake_o
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     by_hour = {s.starts_at.hour: s.primary_label for s in slots}
     assert by_hour[9] == "Aaron B."
@@ -345,18 +343,12 @@ async def test_1215_falls_back_when_continuity_director_busy(monkeypatch, fake_o
 
 @pytest.mark.asyncio
 async def test_venue_autopick_lowest_numbered_free(monkeypatch, fake_org):
-    primaries = _make_primaries("Aaron B.")
     venues = _make_venues("chapel_of_the_bells", "CH-1", "CH-2", "CH-3")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"chapel_of_the_bells": venues},
     )
-    cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
-        roster_names=["Aaron B."],
-    )
+    cal = FakeCalendarClient(roster_names=["Aaron B."])
     slots = await cal_svc.propose_slots(
         db=None,
         calendar=cal,
@@ -364,23 +356,20 @@ async def test_venue_autopick_lowest_numbered_free(monkeypatch, fake_org):
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     assert slots[0].venue_label == "CH-1"
 
 
 @pytest.mark.asyncio
 async def test_venue_autopick_skips_busy_to_next(monkeypatch, fake_org):
-    primaries = _make_primaries("Aaron B.")
     venues = _make_venues("chapel_of_the_bells", "CH-1", "CH-2", "CH-3")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"chapel_of_the_bells": venues},
     )
     ch1_id = next(v.google_id for v in venues if v.name == "CH-1")
     cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
         roster_names=["Aaron B."],
         busy_calendars={ch1_id},
     )
@@ -391,24 +380,19 @@ async def test_venue_autopick_skips_busy_to_next(monkeypatch, fake_org):
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     assert slots[0].venue_label == "CH-2"
 
 
 @pytest.mark.asyncio
 async def test_venue_autopick_skipped_when_flag_off(monkeypatch, fake_org_no_rooms):
-    primaries = _make_primaries("Aaron B.")
     venues = _make_venues("chapel_of_the_bells", "CH-1")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={"chapel_of_the_bells": venues},
     )
-    cal = FakeCalendarClient(
-        roster_google_id="roster@mh",
-        roster_names=["Aaron B."],
-    )
+    cal = FakeCalendarClient(roster_names=["Aaron B."])
     slots = await cal_svc.propose_slots(
         db=None,
         calendar=cal,
@@ -416,6 +400,7 @@ async def test_venue_autopick_skipped_when_flag_off(monkeypatch, fake_org_no_roo
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     assert slots
     for s in slots:
@@ -425,15 +410,11 @@ async def test_venue_autopick_skipped_when_flag_off(monkeypatch, fake_org_no_roo
 
 @pytest.mark.asyncio
 async def test_returns_empty_when_no_directors_on_shift(monkeypatch, fake_org):
-    primaries = _make_primaries("Aaron B.")
-    venues = _make_venues("chapel_of_the_bells", "CH-1")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
-        venues_by_site={"chapel_of_the_bells": venues},
+        venues_by_site={"chapel_of_the_bells": _make_venues("chapel_of_the_bells", "CH-1")},
     )
-    cal = FakeCalendarClient(roster_google_id="roster@mh", roster_names=[])
+    cal = FakeCalendarClient(roster_names=[])
     slots = await cal_svc.propose_slots(
         db=None,
         calendar=cal,
@@ -441,6 +422,7 @@ async def test_returns_empty_when_no_directors_on_shift(monkeypatch, fake_org):
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
     )
     assert slots == []
 
@@ -448,14 +430,11 @@ async def test_returns_empty_when_no_directors_on_shift(monkeypatch, fake_org):
 @pytest.mark.asyncio
 async def test_returns_empty_when_flag_on_but_no_venues_seeded(monkeypatch, fake_org):
     """Brief: when the flag is on we fail closed if no venues exist at the site."""
-    primaries = _make_primaries("Aaron B.")
     _patch_db_helpers(
         monkeypatch,
-        roster_google_id="roster@mh",
-        primaries=primaries,
         venues_by_site={},  # nothing seeded
     )
-    cal = FakeCalendarClient(roster_google_id="roster@mh", roster_names=["Aaron B."])
+    cal = FakeCalendarClient(roster_names=["Aaron B."])
     slots = await cal_svc.propose_slots(
         db=None,
         calendar=cal,
@@ -463,5 +442,26 @@ async def test_returns_empty_when_flag_on_but_no_venues_seeded(monkeypatch, fake
         intent="at_need",
         location_slug="chapel_of_the_bells",
         target_date=date(2026, 5, 4),
+        booking_calendar_google_id=BOOKING_CAL_ID,
+    )
+    assert slots == []
+
+
+@pytest.mark.asyncio
+async def test_returns_empty_when_no_booking_calendar(monkeypatch, fake_org):
+    """Without a shared booking calendar id, the at-need flow returns []."""
+    _patch_db_helpers(
+        monkeypatch,
+        venues_by_site={"chapel_of_the_bells": _make_venues("chapel_of_the_bells", "CH-1")},
+    )
+    cal = FakeCalendarClient(roster_names=["Aaron B."])
+    slots = await cal_svc.propose_slots(
+        db=None,
+        calendar=cal,
+        organization=fake_org,
+        intent="at_need",
+        location_slug="chapel_of_the_bells",
+        target_date=date(2026, 5, 4),
+        # no booking_calendar_google_id
     )
     assert slots == []
