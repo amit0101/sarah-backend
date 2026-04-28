@@ -65,12 +65,39 @@ async def _resolve_location_for_org(
     return loc2
 
 
+def _is_blocked_inbound(from_num: str) -> bool:
+    """True if the inbound from-number is on the SMS_INBOUND_BLOCKLIST.
+
+    Used to suppress accidental engagement with stranger numbers that received
+    a misdirected outbound SMS during dev/testing. See SESSION_HANDOFF.md
+    session 13 "Operational lesson — DO NOT REPEAT" for context.
+    """
+    raw = (get_settings().sms_inbound_blocklist or "").strip()
+    if not raw:
+        return False
+    norm = from_num.strip().lower()
+    blocked = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    return norm in blocked
+
+
 @router.post("/sms/inbound")
 async def twilio_sms(request: Request, db: DbSession) -> PlainTextResponse:
     form = await request.form()
     from_num = str(form.get("From", ""))
     body = str(form.get("Body", ""))
     to_num = str(form.get("To", ""))
+
+    # Silently drop blocklisted numbers — return empty TwiML, no DB writes,
+    # no AI engagement. Logs at WARNING so ops can audit.
+    if _is_blocked_inbound(from_num):
+        logger.warning(
+            "twilio_sms blocked from=%s to=%s body_preview=%r",
+            from_num, to_num, (body or "")[:40],
+        )
+        return PlainTextResponse(
+            content='<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+            media_type="application/xml",
+        )
 
     org = await _resolve_org_for_twilio_to(db, to_num)
 

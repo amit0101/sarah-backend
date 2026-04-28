@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    # Comma-separated list of E.164 numbers Sarah will silently ignore on inbound
+    # SMS. Used to silence dev-test misfires (see SESSION_HANDOFF.md session 13
+    # "Operational lesson — DO NOT REPEAT"). Inbound matching numbers return
+    # 200 + empty TwiML; no contact, conversation, or AI reply is created.
+    sms_inbound_blocklist: str = ""
 
     # Google Calendar — path to service account JSON or OAuth credentials file
     google_calendar_credentials: str = ""
