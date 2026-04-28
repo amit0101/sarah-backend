@@ -96,6 +96,58 @@ async def test_happy_path_flips_channel_and_logs_message():
 
 
 @pytest.mark.asyncio
+async def test_raw_phone_matches_e164_contact():
+    """Regression: the LLM often passes the raw form the user typed
+    ("403-555-9999") while `create_contact` stores E.164 ("+14035559999").
+    Both should normalize and compare equal. See session 13 SMS-handoff probe.
+    """
+    runner = SarahToolRunner()
+    ctx = _ctx(contact_phone="+14035559999")
+    patcher, mock_sms = _patch_sms("SM_test_raw_match")
+    try:
+        result = await runner.run(
+            "continue_on_sms",
+            json.dumps({
+                "phone": "403-555-9999",  # raw, not E.164
+                "consent_text": "consent line",
+            }),
+            ctx,
+        )
+    finally:
+        patcher.stop()
+
+    payload = json.loads(result)
+    assert payload["ok"] is True, payload
+    assert ctx.conversation.channel == "sms"
+    # Twilio must be called with the normalized E.164 form.
+    args, _ = mock_sms.send.call_args
+    assert args[0] == "+14035559999"
+
+
+@pytest.mark.asyncio
+async def test_invalid_phone_returns_invalid_phone_error():
+    runner = SarahToolRunner()
+    ctx = _ctx(contact_phone="+14035559999")
+    patcher, mock_sms = _patch_sms("SM_should_not_send")
+    try:
+        result = await runner.run(
+            "continue_on_sms",
+            json.dumps({
+                "phone": "not-a-number",
+                "consent_text": "consent line",
+            }),
+            ctx,
+        )
+    finally:
+        patcher.stop()
+
+    payload = json.loads(result)
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_phone"
+    mock_sms.send.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_phone_mismatch_refuses_send():
     runner = SarahToolRunner()
     ctx = _ctx(contact_phone="+14035559999")

@@ -64,11 +64,13 @@ class SlotProposal:
     """One mutually-free candidate slot returned to the chat / staff UI.
 
     `primary_calendar_id` is the Google calendar where the booking event will be
-    written. In M&H's operating model this is a single shared calendar
-    (j.hagel@mhfh.com) for ALL Primary at-need bookings; per-director busy state
-    is derived by parsing event titles for the director's name. The pre-need
-    flow keeps the original per-pre-arranger calendar semantics (one calendar
-    per pre-arranger).
+    written. For M&H's at-need flow this is the shared **Primaries** calendar
+    (M&H-owned, SA shared as writer): both director shifts (read for
+    availability) and at-need bookings (write with the director's name in the
+    event title) live on this one calendar, distinguished by title pattern.
+    Per-director busy state is derived by name-parsing booking events. The
+    pre-need flow keeps per-pre-arranger calendar semantics (one calendar per
+    pre-arranger).
     """
 
     starts_at: datetime
@@ -121,9 +123,11 @@ async def propose_slots(
     Routes to at-need or pre-need flow based on `intent` and the org's
     `pre_arrangers_enabled` flag. See APPOINTMENTS_ARCHITECTURE.md §3.1/§3.2.
 
-    `booking_calendar_google_id` (at-need only) is M&H's shared director-bookings
-    calendar (j.hagel@mhfh.com). Per-director busy state is derived from event
-    titles on this calendar; without it the at-need flow returns no slots.
+    `booking_calendar_google_id` (at-need only) is the shared **Primaries**
+    calendar — same calendar that holds shifts (read-convention `availability`)
+    and at-need bookings (read-convention `busy` for the booking events).
+    Per-director busy state is derived by name-parsing booking events on this
+    calendar; without it the at-need flow returns no slots.
     """
 
     flags = FeatureFlags.from_org(organization)
@@ -436,12 +440,14 @@ async def _propose_at_need(
                                  named rooms.
 
     Director-busy semantics — M&H operating model:
-      All Primary at-need bookings are written to a single shared calendar
-      (j.hagel@mhfh.com) with the director's name in the event title (e.g.
-      "Arrangement — Smith Family with Aaron B. at Chapel Of The Bells").
-      To check whether a director is busy at a slot we list events on the
-      shared booking calendar in the slot window and substring-match the
-      director's name in summary / description.
+      All Primary at-need bookings are written to the shared **Primaries**
+      calendar (the same calendar that carries directors' on-shift entries),
+      with the director's name in the event title (e.g. "Arrangement — Smith
+      Family with Aaron B. at Chapel Of The Bells"). Shift entries match the
+      pattern "Primaries - <Name> - HH:MM AM to HH:MM PM"; anything else in a
+      slot window is treated as a booking. To check whether a director is
+      busy at a slot we list events on this calendar in the slot window and
+      substring-match the director's name in summary / description.
 
     The pre-need flow (`_propose_pre_need`) does NOT participate in any of
     this — pre-arrangers book against their own calendars only, no venue

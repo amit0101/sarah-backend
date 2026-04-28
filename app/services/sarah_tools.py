@@ -11,6 +11,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contact_manager.service import ContactService
+from app.contact_manager.validation import normalize_phone_ca_us
 from app.escalation.router import EscalationRouter
 from app.ghl_client import GHLClient
 from app.ghl_client import calendars as ghl_cal
@@ -978,10 +979,26 @@ class SarahToolRunner:
                 "error": "no_contact_phone",
                 "message": "Phone is not on file. Call create_contact with the phone number first, then try again.",
             })
-        if contact_phone != phone:
+
+        # Normalize both sides to E.164 before comparing. `create_contact` stores
+        # E.164 (via contact_manager.validation.normalize_phone_ca_us) but the
+        # model often passes the raw form the visitor typed (e.g. "403-555-0989").
+        # Normalize defensively on both sides — protects against legacy contact
+        # rows that pre-date the normalization gate too.
+        ok_arg, arg_e164 = normalize_phone_ca_us(phone)
+        ok_contact, contact_e164 = normalize_phone_ca_us(contact_phone)
+        if not ok_arg or not arg_e164:
+            return json.dumps({
+                "ok": False,
+                "error": "invalid_phone",
+                "message": "The phone you passed isn't a valid Canadian/US number.",
+            })
+        # Fall back to raw contact_phone string if it can't be parsed (legacy data).
+        compare_contact = contact_e164 or contact_phone
+        if compare_contact != arg_e164:
             logger.warning(
-                "continue_on_sms phone mismatch conv=%s contact_phone=%s arg_phone=%s",
-                ctx.conversation.id, contact_phone[:6] + "...", phone[:6] + "...",
+                "continue_on_sms phone mismatch conv=%s contact=%s arg=%s",
+                ctx.conversation.id, compare_contact[:6] + "...", arg_e164[:6] + "...",
             )
             return json.dumps({
                 "ok": False,
@@ -991,6 +1008,8 @@ class SarahToolRunner:
                     "Use the phone exactly as captured by create_contact."
                 ),
             })
+        # Use the normalized form everywhere downstream.
+        phone = arg_e164
 
         # Guard 2: idempotent — already on SMS.
         if ctx.conversation.channel == "sms":
