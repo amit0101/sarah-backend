@@ -935,7 +935,7 @@ class SarahToolRunner:
         """
         new_path = str(args.get("new_path", ""))
         reason = str(args.get("reason", ""))
-        valid_paths = {"immediate_need", "pre_need", "obituary", "general", "pet_cremation"}
+        valid_paths = {"immediate_need", "pre_need", "obituary", "general"}
         if new_path not in valid_paths:
             return json.dumps({"ok": False, "error": f"invalid path: {new_path}"})
         old_path = ctx.conversation.active_path

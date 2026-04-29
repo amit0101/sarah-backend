@@ -8,7 +8,8 @@ class ConversationPath(str, Enum):
     PRE_NEED = "pre_need"
     OBITUARY = "obituary"
     GENERAL = "general"
-    PET_CREMATION = "pet_cremation"
+    # PET_CREMATION removed in session 18: pet inquiries are routed to staff
+    # via escalate_to_staff from the GLOBAL_BRAND "Pet Inquiries" section.
 
 
 PATH_LABELS: dict[str, str] = {
@@ -16,5 +17,4 @@ PATH_LABELS: dict[str, str] = {
     ConversationPath.PRE_NEED.value: "Pre-Need Planning",
     ConversationPath.OBITUARY.value: "Obituary Lookup",
     ConversationPath.GENERAL.value: "General Question",
-    ConversationPath.PET_CREMATION.value: "Pet Cremation",
 }

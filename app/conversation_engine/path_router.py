@@ -26,8 +26,7 @@ Given a customer's message, classify their intent into exactly one of these conv
 - immediate_need — A family member has just died or passed away, the family needs urgent help or services now. Keywords: death, passed away, just died, urgent, deceased, at-need, body.
 - pre_need — The person is interested in preplanning or pre-arranging funeral services for the future. Keywords: preplan, advance planning, plan ahead, future arrangements, consultation.
 - obituary — The person is looking up an obituary, memorial details, or service times for someone who passed. Keywords: obituary, memorial, service times, tribute, funeral notice.
-- general — General questions about services, pricing, locations, hours, or anything that doesn't fit the other categories. This is the default.
-- pet_cremation — The person is asking about pet cremation or pet memorial services. Keywords: pet cremation, pet ashes, dog cremation, cat cremation.
+- general — General questions about services, pricing, locations, hours, pet cremation inquiries, or anything that doesn't fit the other categories. This is the default. (Pet inquiries land here and are routed to staff per the Pet Inquiries section in the system prompt.)
 
 Important context: This is a funeral home. Messages may contain grief-related language. Classify based on the person's INTENT, not just the presence of certain words.
 

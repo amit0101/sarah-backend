@@ -70,11 +70,12 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
             "name": "check_calendar",
             "strict": True,
             "description": (
-                "Check arrangement counselor availability for a specific date at the "
-                "visitor's location. Returns which counselors are on shift for that "
+                "Check funeral director availability for a specific date at the "
+                "visitor's location. Returns which directors are on shift for that "
                 "location's region (North or South) and the available appointment slots "
                 "(typically 9:00 AM, 12:15 PM, 3:00 PM). Call this before offering "
-                "appointment times to the visitor."
+                "appointment times to the visitor. The 'primary' field is internal "
+                "routing context only — do NOT name the director to the visitor."
             ),
             "parameters": {
                 "type": "object",
@@ -98,8 +99,10 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
             "strict": True,
             "description": (
                 "Book an arrangement appointment on the calendar. Creates a detailed "
-                "event with the family name, assigned counselor, location, and type. "
-                "Use a counselor name returned by check_calendar."
+                "event with the family name, assigned funeral director, location, and type. "
+                "Pass the 'primary' name returned by check_calendar as counselor_name "
+                "(internal field name kept for backward compatibility; do NOT mention "
+                "the director to the visitor)."
             ),
             "parameters": {
                 "type": "object",
@@ -118,7 +121,7 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
                     },
                     "counselor_name": {
                         "type": "string",
-                        "description": "Assigned counselor from check_calendar results",
+                        "description": "Assigned funeral director from check_calendar results (internal field name; do NOT name the director to the visitor)",
                     },
                     "appointment_type": {
                         "type": "string",
@@ -324,7 +327,6 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
                             "pre_need",
                             "obituary",
                             "general",
-                            "pet_cremation",
                         ],
                     },
                     "reason": {
