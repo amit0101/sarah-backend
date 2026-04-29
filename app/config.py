@@ -87,9 +87,18 @@ class Settings(BaseSettings):
     google_calendar_credentials: str = ""
     google_calendar_delegation_email: Optional[str] = None
 
-    # Tribute Center / obituaries
-    tribute_center_api_key: str = ""
+    # Tribute Center / obituaries — Tribute Center Online (TCO) is the platform
+    # behind www.mhfh.com/obituaries. Read endpoints are anonymous: only the
+    # `DomainId` header is required (no API key). The website JS bundle calls
+    #   ${apiBaseUrl}/obituaries/GetObituariesExtended
+    # with header DomainId=<uuid>. For M&H:
+    #   TRIBUTE_CENTER_BASE_URL  = https://api.secure.tributecenteronline.com/ClientApi
+    #   TRIBUTE_CENTER_DOMAIN_ID = ee93aebe-51b2-489e-8a60-5fe98e33065b
+    # `tribute_center_api_key` is retained for forward compat; unused on
+    # public read paths.
     tribute_center_base_url: str = ""
+    tribute_center_domain_id: str = ""
+    tribute_center_api_key: str = ""
 
     # Outbound webhooks (Sarah → Comms Platform)
     comms_platform_webhook_url: str = ""
