@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     # calls from comms (calendar availability/book/reschedule/cancel).
     sarah_webhook_secret: str = ""
 
+    # Inbound GHL webhooks (GHL → Sarah). Used by `/webhooks/ghl/{org_slug}/*`
+    # to validate the HMAC-SHA256 signature on the `x-ghl-signature` header
+    # (`sha256=<hex>`). Mirrors comms-platform-backend's `GHL_WEBHOOK_SECRET`
+    # so a single secret can be reused across both. Pass-through (skip
+    # validation) when empty so dev/local works without operator setup.
+    ghl_webhook_secret: str = ""
+
     # Website crawl
     website_crawl_base_url: str = "https://www.mhfh.com"
     website_crawl_user_agent: str = "SarahBot/1.0 (McInnis & Holloway; +https://www.mhfh.com)"

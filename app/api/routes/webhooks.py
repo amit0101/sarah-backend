@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -20,6 +23,10 @@ from app.models.conversation import Conversation
 from app.models.location import Location
 from app.models.organization import Organization
 from app.services.conversation_service import ConversationService
+from app.services.ghl_appointment_sync import (
+    GhlAppointmentEvent,
+    upsert_from_ghl,
+)
 from app.sms.service import SmsProvider, SmsService
 from app.webhooks.dispatcher import WebhookDispatcher
 
@@ -352,3 +359,87 @@ async def comms_handoff(request: Request, db: DbSession) -> Dict[str, str]:
             )
     await db.commit()
     return {"status": "ok"}
+
+
+# ─── GHL → Sarah appointment webhook (Priority B, session 15) ────────────────
+
+
+def _validate_ghl_signature(raw_body: bytes, signature_header: Optional[str]) -> None:
+    """Validate the HMAC-SHA256 signature on `x-ghl-signature: sha256=<hex>`.
+
+    Mirrors the comms-platform-backend pattern. Pass-through (no
+    validation) when `GHL_WEBHOOK_SECRET` is empty so dev/local works
+    without operator setup. Once the secret is set on Render, every
+    inbound request must carry a matching signature.
+    """
+    secret = get_settings().ghl_webhook_secret or ""
+    if not secret:
+        return
+    if not signature_header:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing GHL webhook signature",
+        )
+    expected = "sha256=" + hmac.new(
+        key=secret.encode(), msg=raw_body, digestmod=hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature_header):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid GHL webhook signature",
+        )
+
+
+@router.post("/ghl/{org_slug}/appointment")
+async def ghl_appointment_webhook(
+    org_slug: str,
+    request: Request,
+    db: DbSession,
+    x_ghl_signature: Optional[str] = Header(None, alias="x-ghl-signature"),
+) -> Dict[str, Any]:
+    """Inbound GHL → Sarah appointment sync.
+
+    The GHL operator configures an "Appointment Status Changed" workflow
+    (covers created / updated / cancelled / no_show / completed) with a
+    "Custom Webhook" action POSTing the canonical body shape defined by
+    `GhlAppointmentEvent` to this endpoint. See
+    `sarah-podium-plan/GHL_APPOINTMENT_WEBHOOK_SETUP.md` for the
+    operator runbook.
+
+    The endpoint upserts into `sarah.appointments` keyed on
+    `(organization_id, ghl_appointment_id)` with idempotency rules (no
+    overwrite of Sarah-origin rows, never NULL out FK columns) handled
+    in `services.ghl_appointment_sync.upsert_from_ghl`.
+    """
+    raw = await request.body()
+    _validate_ghl_signature(raw, x_ghl_signature)
+
+    org = await get_organization_by_slug(db, org_slug)
+    if not org:
+        # Don't 404 — return 200 with status to keep GHL from retrying
+        # against an unknown sub-account. Operator misconfiguration only.
+        logger.warning("ghl_appointment_webhook unknown org_slug=%s", org_slug)
+        return {"status": "unknown_org", "org_slug": org_slug}
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid JSON body",
+        )
+
+    try:
+        event = GhlAppointmentEvent.model_validate(payload)
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid payload", "errors": e.errors()},
+        )
+
+    outcome = await upsert_from_ghl(db, org, event)
+    await db.commit()
+    return {
+        "status": "ok",
+        "outcome": outcome.model_dump(),
+    }
