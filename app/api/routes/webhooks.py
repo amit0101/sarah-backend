@@ -439,6 +439,43 @@ async def ghl_appointment_webhook(
 
     outcome = await upsert_from_ghl(db, org, event)
     await db.commit()
+
+    # B-soft.8 — comms-platform realtime fanout. When the upsert actually
+    # mutates state ('created'/'updated'), notify comms-platform so the
+    # inbox + schedule view can reflect the GHL-originated change without
+    # waiting for a full page refresh. Sarah-origin no-ops + no-change
+    # no-ops are skipped (no new information for comms). Fire-and-forget;
+    # delivery failures are logged inside the dispatcher and never affect
+    # the response we return to GHL.
+    if outcome.action in ("created", "updated"):
+        try:
+            dispatcher = WebhookDispatcher()
+            await dispatcher.emit(
+                "appointment.synced",
+                {
+                    "organization_id": str(org.id),
+                    "organization_slug": org.slug,
+                    "action": outcome.action,
+                    "appointment_id": outcome.appointment_id,
+                    "ghl_appointment_id": outcome.ghl_appointment_id,
+                    "ghl_contact_id": event.ghl_contact_id,
+                    "status": outcome.status,
+                    "starts_at": event.starts_at.isoformat() if event.starts_at else None,
+                    "ends_at": event.ends_at.isoformat() if event.ends_at else None,
+                    "title": event.title,
+                    "google_event_id": event.google_event_id,
+                    "ghl_calendar_id": event.ghl_calendar_id,
+                    "source": "ghl_webhook",
+                },
+            )
+        except Exception as e:  # noqa: BLE001
+            # Dispatcher already swallows network errors; this catch is for
+            # any unexpected programming error so the GHL webhook itself
+            # never 500s on a fanout failure.
+            logger.warning(
+                "ghl_appointment_webhook fanout to comms failed (non-fatal): %s", e
+            )
+
     return {
         "status": "ok",
         "outcome": outcome.model_dump(),

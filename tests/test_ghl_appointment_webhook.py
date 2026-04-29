@@ -483,3 +483,169 @@ async def test_upsert_outcome_is_serialisable():
     assert payload["action"] == "created"
     assert payload["ghl_appointment_id"] == "ghl-ser"
     assert payload["status"] == "scheduled"
+
+
+# ─── B-soft.8 — comms-platform realtime fanout ────────────────────────────────
+
+
+class _FakeRequest:
+    """Minimal Request stand-in with `body()` and `json()` coroutines."""
+
+    def __init__(self, raw: bytes) -> None:
+        self._raw = raw
+
+    async def body(self) -> bytes:
+        return self._raw
+
+    async def json(self):
+        import json as _json
+
+        return _json.loads(self._raw)
+
+
+def _outcome(action: str, *, status: str = "scheduled") -> SyncOutcome:
+    return SyncOutcome(
+        action=action,  # type: ignore[arg-type]
+        appointment_id=str(uuid.uuid4()),
+        ghl_appointment_id="ghl-fanout",
+        status=status,
+        matched_existing=action != "created",
+    )
+
+
+@pytest.mark.asyncio
+async def test_fanout_emits_appointment_synced_on_create():
+    """When upsert returns 'created', a comms fanout event must be dispatched."""
+    import json
+    from app.api.routes import webhooks as wh
+
+    body = json.dumps({
+        "ghl_appointment_id": "ghl-fanout",
+        "status": "new",
+        "starts_at": "2026-05-10T14:00:00-06:00",
+        "ends_at": "2026-05-10T15:00:00-06:00",
+        "ghl_contact_id": "ghl-c1",
+        "title": "Smoke",
+    }).encode()
+    req = _FakeRequest(body)
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    org = _mock_org()
+    org.slug = "mhc"
+
+    with patch.object(wh, "_validate_ghl_signature"), \
+         patch.object(wh, "get_organization_by_slug", AsyncMock(return_value=org)), \
+         patch.object(wh, "upsert_from_ghl", AsyncMock(return_value=_outcome("created"))), \
+         patch.object(wh, "WebhookDispatcher") as mock_disp_cls:
+        mock_disp = MagicMock()
+        mock_disp.emit = AsyncMock()
+        mock_disp_cls.return_value = mock_disp
+
+        result = await wh.ghl_appointment_webhook("mhc", req, db, None)
+
+    assert result["status"] == "ok"
+    assert result["outcome"]["action"] == "created"
+    mock_disp.emit.assert_awaited_once()
+    event_name, payload_data = mock_disp.emit.await_args.args
+    assert event_name == "appointment.synced"
+    assert payload_data["action"] == "created"
+    assert payload_data["ghl_appointment_id"] == "ghl-fanout"
+    assert payload_data["organization_slug"] == "mhc"
+    assert payload_data["ghl_contact_id"] == "ghl-c1"
+    assert payload_data["status"] == "scheduled"
+    assert payload_data["source"] == "ghl_webhook"
+    assert payload_data["starts_at"] == "2026-05-10T14:00:00-06:00"
+
+
+@pytest.mark.asyncio
+async def test_fanout_emits_on_update():
+    """`updated` outcomes also get a fanout event."""
+    import json
+    from app.api.routes import webhooks as wh
+
+    body = json.dumps({
+        "ghl_appointment_id": "ghl-fanout",
+        "status": "cancelled",
+    }).encode()
+    req = _FakeRequest(body)
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    org = _mock_org()
+    org.slug = "mhc"
+
+    with patch.object(wh, "_validate_ghl_signature"), \
+         patch.object(wh, "get_organization_by_slug", AsyncMock(return_value=org)), \
+         patch.object(wh, "upsert_from_ghl", AsyncMock(
+             return_value=_outcome("updated", status="cancelled")
+         )), \
+         patch.object(wh, "WebhookDispatcher") as mock_disp_cls:
+        mock_disp = MagicMock()
+        mock_disp.emit = AsyncMock()
+        mock_disp_cls.return_value = mock_disp
+
+        await wh.ghl_appointment_webhook("mhc", req, db, None)
+
+    mock_disp.emit.assert_awaited_once()
+    _, payload_data = mock_disp.emit.await_args.args
+    assert payload_data["action"] == "updated"
+    assert payload_data["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["ignored_sarah_origin", "ignored_no_change"])
+async def test_fanout_skipped_for_no_op_outcomes(action):
+    """No-op outcomes carry no new state — comms must NOT be fanned out to."""
+    import json
+    from app.api.routes import webhooks as wh
+
+    body = json.dumps({
+        "ghl_appointment_id": "ghl-fanout",
+        "status": "new",
+        "starts_at": "2026-05-10T14:00:00-06:00",
+        "ends_at": "2026-05-10T15:00:00-06:00",
+    }).encode()
+    req = _FakeRequest(body)
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    org = _mock_org()
+
+    with patch.object(wh, "_validate_ghl_signature"), \
+         patch.object(wh, "get_organization_by_slug", AsyncMock(return_value=org)), \
+         patch.object(wh, "upsert_from_ghl", AsyncMock(return_value=_outcome(action))), \
+         patch.object(wh, "WebhookDispatcher") as mock_disp_cls:
+        mock_disp = MagicMock()
+        mock_disp.emit = AsyncMock()
+        mock_disp_cls.return_value = mock_disp
+
+        result = await wh.ghl_appointment_webhook("mhc", req, db, None)
+
+    assert result["outcome"]["action"] == action
+    mock_disp.emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fanout_failure_does_not_break_response():
+    """A dispatcher exception must not 500 the GHL webhook."""
+    import json
+    from app.api.routes import webhooks as wh
+
+    body = json.dumps({
+        "ghl_appointment_id": "ghl-fanout",
+        "status": "new",
+        "starts_at": "2026-05-10T14:00:00-06:00",
+        "ends_at": "2026-05-10T15:00:00-06:00",
+    }).encode()
+    req = _FakeRequest(body)
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    org = _mock_org()
+
+    with patch.object(wh, "_validate_ghl_signature"), \
+         patch.object(wh, "get_organization_by_slug", AsyncMock(return_value=org)), \
+         patch.object(wh, "upsert_from_ghl", AsyncMock(return_value=_outcome("created"))), \
+         patch.object(wh, "WebhookDispatcher", side_effect=RuntimeError("boom")):
+        # Should not raise
+        result = await wh.ghl_appointment_webhook("mhc", req, db, None)
+
+    assert result["status"] == "ok"
+    assert result["outcome"]["action"] == "created"
