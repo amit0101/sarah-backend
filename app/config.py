@@ -58,6 +58,31 @@ class Settings(BaseSettings):
     # 200 + empty TwiML; no contact, conversation, or AI reply is created.
     sms_inbound_blocklist: str = ""
 
+    # B-soft.1 — outbound SMS rate limit guard (session 16). When enabled,
+    # SmsService.send() refuses to deliver more than `sms_rate_limit_per_24h`
+    # messages to any single E.164 destination within a rolling 24h window.
+    # In-memory sliding-window counter (per-process; Sarah backend is single
+    # instance on Render so this is sufficient). On limit hit: WARNING log +
+    # returns None (same shape as Twilio-not-configured). Default: disabled
+    # for backward compat. Set `SMS_RATE_LIMIT_ENABLED=true` on Render to
+    # turn on; tune `SMS_RATE_LIMIT_PER_24H` per ops policy.
+    sms_rate_limit_enabled: bool = False
+    sms_rate_limit_per_24h: int = Field(default=20, ge=1, le=10000)
+
+    # B-soft.2 — Twilio Lookup pre-flight (session 16). When enabled,
+    # SmsService.send() calls Twilio Lookup v2 (line_type_intelligence) before
+    # the actual messages.create() and rejects destinations whose carrier type
+    # is not in `sms_lookup_allowed_types` (CSV of: mobile, landline, voip,
+    # fixedVoip, nonFixedVoip, personal, tollFree, sharedCost, uan, voicemail,
+    # pager, unknown). Default allowed: mobile only. Lookups are ~$0.005 each
+    # and cached in-process for `sms_lookup_cache_ttl_seconds` to amortize.
+    # On rejection: WARNING log + returns None. On Lookup API failure: fail
+    # OPEN (proceed with send) and log — Twilio Lookup outages must not block
+    # the SMS path. Default: disabled for backward compat.
+    sms_lookup_enabled: bool = False
+    sms_lookup_allowed_types: str = "mobile"
+    sms_lookup_cache_ttl_seconds: int = Field(default=86400, ge=60, le=2592000)
+
     # Google Calendar — path to service account JSON or OAuth credentials file
     google_calendar_credentials: str = ""
     google_calendar_delegation_email: Optional[str] = None
