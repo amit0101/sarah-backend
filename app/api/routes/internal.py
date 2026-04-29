@@ -34,12 +34,14 @@ from typing import Any, Optional
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.calendar_client.google_adapter import GoogleCalendarAdapter
 from app.config import get_settings
 from app.database.session import DbSession
 from app.ghl_client.factory import get_ghl_client_for_org
 from app.models.appointment import Appointment
+from app.models.calendar import CALENDAR_KINDS, READ_CONVENTIONS, Calendar
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.models.location import Location
@@ -497,6 +499,446 @@ async def list_calendar_appointments(
     return {
         "organization_id": str(org.id),
         "appointments": [_appointment_to_dict(a) for a in rows],
+    }
+
+
+# ─── Calendar catalog CRUD + ACL + flag-write (W3 — A2 in session 14) ────────
+#
+# Surface the operator-facing catalog for the comms-platform Calendar
+# Management page (APPOINTMENTS_ARCHITECTURE.md §6.2.1). Auth is the same
+# `X-Webhook-Secret` shared-secret model as the rest of this module.
+
+
+class CalendarCreateRequest(BaseModel):
+    organization_id: Optional[uuid.UUID] = None
+    organization_slug: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=255)
+    kind: str = Field(..., description="One of: " + ", ".join(CALENDAR_KINDS))
+    read_convention: str = Field("busy")
+    description: Optional[str] = None
+    time_zone: str = Field("America/Edmonton")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    # When provided, skip Google calendars.insert and just register an
+    # already-existing calendar (e.g. the M&H-owned Primaries roster).
+    google_id: Optional[str] = None
+
+
+class CalendarPatchRequest(BaseModel):
+    name: Optional[str] = None
+    active: Optional[bool] = None
+    metadata: Optional[dict[str, Any]] = None
+    read_convention: Optional[str] = None
+
+
+class CalendarShareRequest(BaseModel):
+    email: str = Field(..., min_length=3)
+    role: str = Field("writer")
+
+
+class FeatureFlagsPatchRequest(BaseModel):
+    organization_id: Optional[uuid.UUID] = None
+    organization_slug: Optional[str] = None
+    room_calendars_enabled: Optional[bool] = None
+    pre_arrangers_enabled: Optional[bool] = None
+
+
+def _calendar_to_dict(c: Calendar) -> dict[str, Any]:
+    return {
+        "id": str(c.id),
+        "organization_id": str(c.organization_id),
+        "name": c.name,
+        "google_id": c.google_id,
+        "kind": c.kind,
+        "read_convention": c.read_convention,
+        "active": c.active,
+        "metadata": c.metadata_ or {},
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    }
+
+
+@router.get("/internal/calendars")
+async def list_calendars(
+    db: DbSession,
+    organization_id: Optional[uuid.UUID] = Query(None),
+    organization_slug: Optional[str] = Query(None),
+    kind: Optional[str] = Query(None),
+    active: Optional[bool] = Query(None),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+) -> dict[str, Any]:
+    """List `sarah.calendars` rows for an org, optionally filtered."""
+    _require_webhook_secret(x_webhook_secret)
+    org = await _resolve_org(db, organization_id, organization_slug)
+
+    stmt = select(Calendar).where(Calendar.organization_id == org.id)
+    if kind is not None:
+        if kind not in CALENDAR_KINDS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid kind; expected one of {CALENDAR_KINDS}",
+            )
+        stmt = stmt.where(Calendar.kind == kind)
+    if active is not None:
+        stmt = stmt.where(Calendar.active == active)
+    stmt = stmt.order_by(Calendar.kind, Calendar.name)
+
+    rows = (await db.execute(stmt)).scalars().all()
+    return {
+        "organization_id": str(org.id),
+        "organization_slug": org.slug,
+        "calendars": [_calendar_to_dict(c) for c in rows],
+    }
+
+
+@router.post(
+    "/internal/calendars",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_calendar(
+    payload: CalendarCreateRequest,
+    db: DbSession,
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+) -> dict[str, Any]:
+    """Mint a new SA-owned calendar in Google + persist a `sarah.calendars` row.
+
+    When `payload.google_id` is provided, skip the Google `calendars.insert`
+    call and just register the existing calendar (e.g. the M&H-owned shared
+    Primaries roster). The SA still needs ACL access — caller's responsibility
+    to grant it before this call (or via the share endpoint after).
+    """
+    _require_webhook_secret(x_webhook_secret)
+    org = await _resolve_org(db, payload.organization_id, payload.organization_slug)
+
+    if payload.kind not in CALENDAR_KINDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid kind; expected one of {CALENDAR_KINDS}",
+        )
+    if payload.read_convention not in READ_CONVENTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid read_convention; expected one of {READ_CONVENTIONS}",
+        )
+
+    google_id = payload.google_id
+    if not google_id:
+        try:
+            cal = await GoogleCalendarAdapter().create_calendar(
+                summary=payload.name,
+                description=payload.description,
+                time_zone=payload.time_zone,
+            )
+        except Exception as e:
+            logger.exception("google_create_calendar_failed name=%s", payload.name)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"google calendars.insert failed: {e}",
+            )
+        google_id = cal.get("id")
+        if not google_id:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="google returned no calendar id",
+            )
+
+    # Defend against duplicate (org, google_id) pairs — UNIQUE constraint also
+    # catches it but a clean 409 is friendlier.
+    existing = await db.execute(
+        select(Calendar).where(
+            Calendar.organization_id == org.id,
+            Calendar.google_id == google_id,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="calendar with this google_id already registered for this org",
+        )
+
+    row = Calendar(
+        organization_id=org.id,
+        name=payload.name,
+        google_id=google_id,
+        kind=payload.kind,
+        read_convention=payload.read_convention,
+        active=True,
+        metadata_=payload.metadata,
+    )
+    db.add(row)
+    await db.flush()
+    await db.commit()
+    await db.refresh(row)
+    return _calendar_to_dict(row)
+
+
+@router.patch("/internal/calendars/{calendar_id}")
+async def patch_calendar(
+    calendar_id: uuid.UUID,
+    payload: CalendarPatchRequest,
+    db: DbSession,
+    organization_id: Optional[uuid.UUID] = Query(None),
+    organization_slug: Optional[str] = Query(None),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+) -> dict[str, Any]:
+    """Toggle active, edit name, edit metadata, change read_convention."""
+    _require_webhook_secret(x_webhook_secret)
+    org = await _resolve_org(db, organization_id, organization_slug)
+
+    row = await db.get(Calendar, calendar_id)
+    if row is None or row.organization_id != org.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="calendar not found for this organization",
+        )
+
+    if payload.read_convention is not None:
+        if payload.read_convention not in READ_CONVENTIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"invalid read_convention; expected one of {READ_CONVENTIONS}",
+            )
+        row.read_convention = payload.read_convention
+    if payload.name is not None:
+        row.name = payload.name
+    if payload.active is not None:
+        row.active = payload.active
+    if payload.metadata is not None:
+        row.metadata_ = payload.metadata
+        flag_modified(row, "metadata_")
+
+    await db.commit()
+    await db.refresh(row)
+    return _calendar_to_dict(row)
+
+
+@router.get("/internal/calendars/{calendar_id}/events")
+async def list_calendar_events(
+    calendar_id: uuid.UUID,
+    db: DbSession,
+    target_date: Optional[_date] = Query(
+        None, description="Defaults to today in the supplied timezone"
+    ),
+    timezone: str = Query("America/Edmonton"),
+    organization_id: Optional[uuid.UUID] = Query(None),
+    organization_slug: Optional[str] = Query(None),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+) -> dict[str, Any]:
+    """Read-through to Google for the "today's events on this calendar" view.
+
+    Lazy-loaded by the comms-platform Calendar Management cards — only
+    fetched when a card is expanded.
+    """
+    _require_webhook_secret(x_webhook_secret)
+    org = await _resolve_org(db, organization_id, organization_slug)
+
+    row = await db.get(Calendar, calendar_id)
+    if row is None or row.organization_id != org.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="calendar not found for this organization",
+        )
+
+    from datetime import time as _time, timedelta as _timedelta
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(timezone)
+    day = target_date or datetime.now(tz).date()
+    start = datetime.combine(day, _time.min, tzinfo=tz)
+    end = start + _timedelta(days=1)
+
+    try:
+        events = await GoogleCalendarAdapter().list_events(
+            row.google_id,
+            time_min_iso=start.isoformat(),
+            time_max_iso=end.isoformat(),
+        )
+    except Exception as e:
+        logger.exception("google_list_events_failed cal=%s", row.google_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"google events.list failed: {e}",
+        )
+
+    return {
+        "calendar_id": str(row.id),
+        "google_id": row.google_id,
+        "target_date": day.isoformat(),
+        "timezone": timezone,
+        "events": [
+            {
+                "id": ev.get("id"),
+                "summary": ev.get("summary"),
+                "description": ev.get("description"),
+                "start": ev.get("start"),
+                "end": ev.get("end"),
+                "creator": (ev.get("creator") or {}).get("email"),
+                "status": ev.get("status"),
+            }
+            for ev in events
+        ],
+    }
+
+
+@router.get("/internal/calendars/{calendar_id}/acl")
+async def list_calendar_acl(
+    calendar_id: uuid.UUID,
+    db: DbSession,
+    organization_id: Optional[uuid.UUID] = Query(None),
+    organization_slug: Optional[str] = Query(None),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+) -> dict[str, Any]:
+    """List who has access to this calendar (via Google ACL)."""
+    _require_webhook_secret(x_webhook_secret)
+    org = await _resolve_org(db, organization_id, organization_slug)
+
+    row = await db.get(Calendar, calendar_id)
+    if row is None or row.organization_id != org.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="calendar not found for this organization",
+        )
+
+    try:
+        rules = await GoogleCalendarAdapter().list_acl(row.google_id)
+    except Exception as e:
+        logger.exception("google_list_acl_failed cal=%s", row.google_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"google acl.list failed: {e}",
+        )
+
+    return {
+        "calendar_id": str(row.id),
+        "google_id": row.google_id,
+        "rules": [
+            {
+                "id": r.get("id"),
+                "role": r.get("role"),
+                "scope": r.get("scope") or {},
+            }
+            for r in rules
+        ],
+    }
+
+
+@router.post("/internal/calendars/{calendar_id}/share")
+async def share_calendar(
+    calendar_id: uuid.UUID,
+    payload: CalendarShareRequest,
+    db: DbSession,
+    organization_id: Optional[uuid.UUID] = Query(None),
+    organization_slug: Optional[str] = Query(None),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+) -> dict[str, Any]:
+    """Grant a user/group access to this calendar via Google ACL."""
+    _require_webhook_secret(x_webhook_secret)
+    org = await _resolve_org(db, organization_id, organization_slug)
+
+    row = await db.get(Calendar, calendar_id)
+    if row is None or row.organization_id != org.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="calendar not found for this organization",
+        )
+
+    try:
+        rule = await GoogleCalendarAdapter().insert_acl(
+            row.google_id, email=payload.email, role=payload.role
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.exception(
+            "google_insert_acl_failed cal=%s email=%s",
+            row.google_id,
+            payload.email,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"google acl.insert failed: {e}",
+        )
+
+    return {
+        "calendar_id": str(row.id),
+        "google_id": row.google_id,
+        "rule": {
+            "id": rule.get("id"),
+            "role": rule.get("role"),
+            "scope": rule.get("scope") or {},
+        },
+    }
+
+
+@router.delete(
+    "/internal/calendars/{calendar_id}/share/{rule_id:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def revoke_calendar_share(
+    calendar_id: uuid.UUID,
+    rule_id: str,
+    db: DbSession,
+    organization_id: Optional[uuid.UUID] = Query(None),
+    organization_slug: Optional[str] = Query(None),
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+) -> None:
+    """Revoke a specific ACL rule (rule_id from list_acl, e.g. `user:foo@bar`)."""
+    _require_webhook_secret(x_webhook_secret)
+    org = await _resolve_org(db, organization_id, organization_slug)
+
+    row = await db.get(Calendar, calendar_id)
+    if row is None or row.organization_id != org.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="calendar not found for this organization",
+        )
+
+    try:
+        await GoogleCalendarAdapter().delete_acl(row.google_id, rule_id)
+    except Exception as e:
+        logger.exception(
+            "google_delete_acl_failed cal=%s rule=%s", row.google_id, rule_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"google acl.delete failed: {e}",
+        )
+
+
+@router.patch("/internal/org/feature-flags")
+async def patch_feature_flags(
+    payload: FeatureFlagsPatchRequest,
+    db: DbSession,
+    x_webhook_secret: Optional[str] = Header(None, alias="X-Webhook-Secret"),
+) -> dict[str, Any]:
+    """Update `organizations.config.feature_flags` for the org.
+
+    Only the keys explicitly supplied in the payload are changed; absent
+    keys preserve their existing value. Returns the new effective flags.
+    """
+    _require_webhook_secret(x_webhook_secret)
+    org = await _resolve_org(db, payload.organization_id, payload.organization_slug)
+
+    # Mutate-in-place; mark JSONB column dirty so SQLAlchemy emits an UPDATE.
+    cfg = dict(org.config or {})
+    flags = dict(cfg.get("feature_flags") or {})
+    if payload.room_calendars_enabled is not None:
+        flags["room_calendars_enabled"] = payload.room_calendars_enabled
+    if payload.pre_arrangers_enabled is not None:
+        flags["pre_arrangers_enabled"] = payload.pre_arrangers_enabled
+    cfg["feature_flags"] = flags
+    org.config = cfg
+    flag_modified(org, "config")
+
+    await db.commit()
+    await db.refresh(org)
+
+    effective = cal_svc.FeatureFlags.from_org(org)
+    return {
+        "organization_id": str(org.id),
+        "organization_slug": org.slug,
+        "feature_flags": {
+            "room_calendars_enabled": effective.room_calendars_enabled,
+            "pre_arrangers_enabled": effective.pre_arrangers_enabled,
+        },
     }
 
 
