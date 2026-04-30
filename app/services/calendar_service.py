@@ -724,11 +724,16 @@ async def _busy_directors_in_window(
     )
     busy: set = set()
     for ev in events:
-        haystack_parts = [
-            str(ev.get("summary") or ""),
-            str(ev.get("description") or ""),
-        ]
-        haystack = " ".join(haystack_parts).lower()
+        summary = str(ev.get("summary") or "")
+        # Skip shift entries. M&H's operating model writes roster shifts AND
+        # at-need bookings to the same shared Primaries calendar (read
+        # convention 'availability' for shifts, 'busy' for bookings). Shift
+        # entries match the regex "Primaries - <Name> - HH:MM AM to HH:MM PM";
+        # treating them as bookings would mark every on-shift director busy
+        # via their own shift event, returning zero slots.
+        if parse_counselor_from_event(summary) is not None:
+            continue
+        haystack = " ".join([summary, str(ev.get("description") or "")]).lower()
         if not haystack.strip():
             continue
         for name in candidate_names:

@@ -448,6 +448,55 @@ async def test_returns_empty_when_flag_on_but_no_venues_seeded(monkeypatch, fake
 
 
 @pytest.mark.asyncio
+async def test_shared_primaries_calendar_does_not_self_poison_busy(monkeypatch, fake_org):
+    """Regression: M&H runs the roster + at-need bookings on the SAME shared
+    Primaries calendar. `_busy_directors_in_window` must skip shift-pattern
+    entries (`Primaries - <Name> - <time>`) so on-shift directors aren't
+    flagged busy by their own shift event."""
+    venues = _make_venues("chapel_of_the_bells", "CH-1", "CH-2", "CH-3")
+    _patch_db_helpers(
+        monkeypatch,
+        venues_by_site={"chapel_of_the_bells": venues},
+    )
+
+    # FakeCalendarClient that simulates the prod operating model: roster
+    # shifts AND bookings live on the same google_id. Listing the booking
+    # calendar therefore returns the shift events too.
+    SHARED_CAL = "shared-primaries@mh"
+
+    class SharedCalendarClient(FakeCalendarClient):
+        async def list_events(self, calendar_id, *, time_min_iso, time_max_iso):
+            if calendar_id == SHARED_CAL:
+                return [_roster_event(n) for n in self.roster_names]
+            return []
+
+    cal = SharedCalendarClient(roster_names=["Aaron B.", "Terra S."])
+
+    # Stub the roster lookup to point at the shared calendar id.
+    async def fake_single_of_kind(_db, _org_id, *, kind):
+        if kind == "primaries_roster":
+            return FakeCal(name="Shared", google_id=SHARED_CAL, kind="primaries_roster")
+        return None
+
+    monkeypatch.setattr(cal_svc, "_single_calendar_of_kind", fake_single_of_kind)
+
+    slots = await cal_svc.propose_slots(
+        db=None,
+        calendar=cal,
+        organization=fake_org,
+        intent="at_need",
+        location_slug="chapel_of_the_bells",
+        target_date=date(2026, 5, 4),
+        booking_calendar_google_id=SHARED_CAL,  # same calendar as roster
+    )
+    # Pre-fix this returned [] because Aaron B. and Terra S. were both
+    # marked busy via their own shift events.
+    assert slots, "shared-calendar setup must still propose slots"
+    nine = next(s for s in slots if s.starts_at.hour == 9)
+    assert nine.primary_label == "Aaron B."  # priority director, on-shift, free
+
+
+@pytest.mark.asyncio
 async def test_returns_empty_when_no_booking_calendar(monkeypatch, fake_org):
     """Without a shared booking calendar id, the at-need flow returns []."""
     _patch_db_helpers(
