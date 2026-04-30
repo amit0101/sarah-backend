@@ -199,15 +199,19 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
             "type": "function",
             "name": "search_obituary",
             "strict": True,
-            "description": "Search obituaries via Tribute Center.",
+            "description": (
+                "Search obituaries by deceased's name across ALL McInnis & Holloway chapels. "
+                "Each result includes the chapel that served the family in its `location` field — "
+                "read it back to the visitor so they know which chapel handled the service. "
+                "Do NOT pre-filter by chapel: visitors usually don't know which chapel served their loved one."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
                     "date": {"type": "string"},
-                    "location_hint": {"type": "string"},
                 },
-                "required": ["name", "date", "location_hint"],
+                "required": ["name", "date"],
                 "additionalProperties": False,
             },
         },

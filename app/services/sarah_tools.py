@@ -826,12 +826,7 @@ class SarahToolRunner:
     async def _search_obituary(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
         nm = self._opt_str(args.get("name"))
         dt = self._opt_str(args.get("date"))
-        hint = self._opt_str(args.get("location_hint")) or ctx.location.name
-        res = await ctx.obituaries.search(
-            name=nm,
-            date=dt,
-            location_hint=hint,
-        )
+        res = await ctx.obituaries.search(name=nm, date=dt)
         return json.dumps({"ok": True, "results": res})
 
     async def _escalate(self, ctx: ToolContext, args: Dict[str, Any]) -> str:

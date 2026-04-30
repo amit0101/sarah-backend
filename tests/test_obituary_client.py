@@ -3,7 +3,7 @@
 Mocks httpx.AsyncClient.get so no network is required. Validates:
   - request shape (URL, DomainId header, params)
   - response normalisation (TCO PascalCase → Sarah snake_case)
-  - location_hint client-side filter
+  - location_hint parameter is accepted-but-ignored (DEPRECATED)
   - graceful fallback when not configured / on transport errors
 """
 
@@ -106,7 +106,12 @@ async def test_search_sends_correct_request_and_normalises(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_search_filters_by_location_hint(monkeypatch):
+async def test_location_hint_is_accepted_but_ignored(monkeypatch):
+    """`location_hint` is DEPRECATED: visitors don't know which chapel served
+    their loved one (that's what they're asking the search to surface), and
+    `ServingLocationName` holds chapel names rather than cities, so substring
+    filtering produced wrong results. The parameter is preserved for caller
+    backward compat but must never filter the response."""
     _patched_settings(monkeypatch)
 
     rec_crowfoot = {**_SAMPLE_RECORD, "Id": 1, "ServingLocationName": "McInnis & Holloway, Crowfoot"}
@@ -120,7 +125,8 @@ async def test_search_filters_by_location_hint(monkeypatch):
     client = TributeCenterClient()
     results = await client.search(name="", location_hint="Park Memorial")
 
-    assert [r["id"] for r in results] == [2]
+    # Both records returned regardless of the hint — no client-side filtering.
+    assert sorted(r["id"] for r in results) == [1, 2]
 
 
 @pytest.mark.asyncio

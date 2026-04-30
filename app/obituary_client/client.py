@@ -55,7 +55,7 @@ class TributeCenterClient:
         *,
         name: Optional[str] = None,
         date: Optional[str] = None,                # accepted for API compat; not sent to TCO
-        location_hint: Optional[str] = None,       # accepted for API compat; filtered post-fetch
+        location_hint: Optional[str] = None,       # DEPRECATED: accepted but ignored (see docstring)
         page_size: int = _DEFAULT_PAGE_SIZE,
     ) -> List[Dict[str, Any]]:
         """Search recent obituaries by name; anonymous (DomainId header only).
@@ -65,8 +65,12 @@ class TributeCenterClient:
                           Empty / None ⇒ recent obituaries (sorted by death date).
           date:           ignored — TCO's GetObituariesExtended has no server-side
                           date filter. Included so older callers keep working.
-          location_hint:  if provided, filter the response client-side by
-                          substring match against `ServingLocationName`.
+          location_hint:  DEPRECATED. Accepted-but-ignored. Visitors generally
+                          don't know which chapel served their loved one — that's
+                          what they're asking the search to surface — and the
+                          `ServingLocationName` field holds chapel names not
+                          cities, so substring filtering produces wrong results.
+                          Keep the parameter for backward compat; never filter.
           page_size:      number of records to ask TCO for (default 12).
         """
         if not self._base or not self._domain_id:
@@ -103,14 +107,6 @@ class TributeCenterClient:
             return []
 
         results = [self._normalise(rec) for rec in data if isinstance(rec, dict)]
-
-        if location_hint:
-            needle = location_hint.strip().lower()
-            results = [
-                r for r in results
-                if needle in (r.get("location") or "").lower()
-            ]
-
         return results
 
     @staticmethod
