@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from app import __version__
 from app.api.routes import admin, chat, internal, webhooks, ws_chat
 from app.config import get_settings
+from app.conversation_engine.engine import warmup_openai_client
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +21,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Sarah API starting v%s", __version__)
+    # Session 21 — warm the shared AsyncOpenAI client's connection pool so the
+    # first real user turn after a Render cold start doesn't pay the TLS /
+    # HTTP/2 handshake cost (~300-500 ms). Non-blocking if it fails.
+    try:
+        await warmup_openai_client()
+    except Exception:
+        logger.exception("openai_warmup crashed; continuing startup")
     yield
     logger.info("Sarah API shutdown")
 

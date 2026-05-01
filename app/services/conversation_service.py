@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.conversation_engine.engine import ConversationEngine
 from app.conversation_engine.guardrails import evaluate_guardrails
 from app.conversation_engine.path_router import classify_path
-from app.ghl_client.factory import get_ghl_client
+from app.ghl_client.factory import get_ghl_client_for_org
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.models.location import Location
@@ -56,6 +56,8 @@ class ConversationService:
         org = await self._db.get(Organization, conv.organization_id)
         if not org:
             raise ValueError("organization not found")
+        if org.status != "active":
+            raise ValueError("organization suspended")
 
         contact = await self._db.get(Contact, conv.contact_id)
         if not contact:
@@ -104,7 +106,9 @@ class ConversationService:
         )
 
         turn_id = uuid.uuid4()
-        ghl = await get_ghl_client(self._db, org.id)
+        # Session 21 — we already loaded `org` above; skip the redundant
+        # Organization fetch inside get_ghl_client() and use the cached sync path.
+        ghl = get_ghl_client_for_org(org)
         ctx = ToolContext(
             db=self._db,
             ghl=ghl,

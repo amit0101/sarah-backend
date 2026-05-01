@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 # URLs that failed DNS / connect; skip further emits this process (avoids log spam).
 _disabled_comms_urls: Set[str] = set()
 
+# Session 21 — hold strong references to in-flight webhook tasks so they
+# aren't (a) garbage-collected mid-flight by the asyncio loop, or (b) dropped
+# silently on worker shutdown. Each task removes itself via a done_callback
+# when it completes or is cancelled.
+_in_flight_tasks: Set[asyncio.Task] = set()
+
 # Section 6.1 — retry configuration
 _MAX_RETRIES = 3
 _BACKOFF_BASE_SECONDS = 1.0  # 1s, 2s, 4s
@@ -144,4 +150,6 @@ class WebhookDispatcher:
                 json.dumps(payload)[:500],  # Truncate for log readability
             )
 
-        asyncio.create_task(_send_with_retry())
+        task = asyncio.create_task(_send_with_retry())
+        _in_flight_tasks.add(task)
+        task.add_done_callback(_in_flight_tasks.discard)
