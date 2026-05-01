@@ -234,6 +234,12 @@ async def _run_ws_session(
                 reply = "Sorry, something went wrong processing your message."
                 responded = False
             await websocket.send_json({"type": "typing", "value": False})
+            # Guard: if the AI engine ran but produced no text (e.g. exhausted
+            # tool-call rounds without a final message), substitute a fallback
+            # so the user never sees an empty bubble.
+            if not reply and responded:
+                logger.warning("Empty AI response for conv=%s — substituting fallback", conv_id)
+                reply = "I'm sorry, I wasn't able to generate a response. Could you try rephrasing your question?"
             await websocket.send_json(
                 {
                     "type": "message",

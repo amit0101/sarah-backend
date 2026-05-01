@@ -47,7 +47,13 @@ class ConversationService:
             raise ValueError("conversation not found")
         if conv.mode == "staff":
             await self._log_message(conv.id, "user", user_text, channel)
-            return "", False
+            return (
+                "Your conversation has been passed to our team. "
+                "A staff member will be with you shortly.\n\n"
+                "If this is urgent, you can also reach us directly:\n\n"
+                "📞 **Phone:** (403) 243-8200 (available 24/7)\n"
+                "📱 **Text:** (403) 256-9575"
+            ), False
 
         loc = await self._db.get(Location, (conv.organization_id, conv.location_id))
         if not loc:
