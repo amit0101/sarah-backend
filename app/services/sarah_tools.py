@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.contact_manager.service import ContactService
 from app.contact_manager.validation import normalize_phone_ca_us
+import asyncio as _asyncio
 from app.escalation.router import EscalationRouter
 from app.ghl_client import GHLClient
 from app.ghl_client import calendars as ghl_cal
@@ -409,25 +410,32 @@ class SarahToolRunner:
         booking_cal_id = ctx.location.calendar_id
 
         if use_new_path:
-            try:
-                slots = await cal_svc.propose_slots(
-                    db=ctx.db,
-                    calendar=ctx.calendar,
-                    organization=ctx.organization,
-                    intent=intent,
-                    location_slug=ctx.location.id,
-                    target_date=dt,
-                    timezone=tz_name,
-                    booking_calendar_google_id=booking_cal_id,
-                )
-            except Exception:
-                logger.exception(
-                    "propose_slots_failed conv=%s loc=%s intent=%s",
-                    ctx.conversation.id,
-                    ctx.location.id,
-                    intent,
-                )
-                slots = []
+            for _attempt in range(3):
+                try:
+                    slots = await cal_svc.propose_slots(
+                        db=ctx.db,
+                        calendar=ctx.calendar,
+                        organization=ctx.organization,
+                        intent=intent,
+                        location_slug=ctx.location.id,
+                        target_date=dt,
+                        timezone=tz_name,
+                        booking_calendar_google_id=booking_cal_id,
+                    )
+                    break  # success
+                except Exception:
+                    if _attempt < 2:
+                        logger.warning(
+                            "propose_slots attempt %d failed, retrying conv=%s",
+                            _attempt + 1, ctx.conversation.id,
+                        )
+                        await _asyncio.sleep(1 * (_attempt + 1))
+                    else:
+                        logger.exception(
+                            "propose_slots_failed after 3 attempts conv=%s loc=%s intent=%s",
+                            ctx.conversation.id, ctx.location.id, intent,
+                        )
+                        slots = []
 
             if slots:
                 return json.dumps({
@@ -456,11 +464,27 @@ class SarahToolRunner:
 
         start = datetime(dt.year, dt.month, dt.day, 0, 0, 0, tzinfo=tz)
         end = datetime(dt.year, dt.month, dt.day, 23, 59, 59, tzinfo=tz)
-        events = await ctx.calendar.list_events(
-            cal_id,
-            time_min_iso=start.isoformat(),
-            time_max_iso=end.isoformat(),
-        )
+        for _attempt in range(3):
+            try:
+                events = await ctx.calendar.list_events(
+                    cal_id,
+                    time_min_iso=start.isoformat(),
+                    time_max_iso=end.isoformat(),
+                )
+                break  # success
+            except Exception:
+                if _attempt < 2:
+                    logger.warning(
+                        "list_events attempt %d failed, retrying conv=%s",
+                        _attempt + 1, ctx.conversation.id,
+                    )
+                    await _asyncio.sleep(1 * (_attempt + 1))
+                else:
+                    logger.exception(
+                        "list_events_failed after 3 attempts conv=%s cal=%s",
+                        ctx.conversation.id, cal_id,
+                    )
+                    return json.dumps({"ok": False, "error": "calendar unavailable"})
         result = build_availability_response(
             date_str=date_str,
             location_slug=ctx.location.id,
@@ -520,27 +544,35 @@ class SarahToolRunner:
                 ctx, ghl_cal_id=ghl_cal_id, ghl_loc=ghl_loc, ghl_contact_id=ghl_contact_id,
             )
 
-            try:
-                appt = await cal_svc.confirm_booking(
-                    db=ctx.db,
-                    calendar=ctx.calendar,
-                    organization=ctx.organization,
-                    slot=slot,
-                    contact=ctx.contact,
-                    intent=intent,
-                    service_type=service_type,
-                    created_by="sarah",
-                    conversation_id=ctx.conversation.id,
-                    notes=notes,
-                    push_to_ghl=push_to_ghl,
-                )
-            except Exception:
-                logger.exception(
-                    "confirm_booking_failed conv=%s primary=%s",
-                    ctx.conversation.id,
-                    primary_cal.google_id,
-                )
-                return json.dumps({"ok": False, "error": "booking failed"})
+            for _attempt in range(3):
+                try:
+                    appt = await cal_svc.confirm_booking(
+                        db=ctx.db,
+                        calendar=ctx.calendar,
+                        organization=ctx.organization,
+                        slot=slot,
+                        contact=ctx.contact,
+                        intent=intent,
+                        service_type=service_type,
+                        created_by="sarah",
+                        conversation_id=ctx.conversation.id,
+                        notes=notes,
+                        push_to_ghl=push_to_ghl,
+                    )
+                    break  # success
+                except Exception:
+                    if _attempt < 2:
+                        logger.warning(
+                            "confirm_booking attempt %d failed, retrying conv=%s",
+                            _attempt + 1, ctx.conversation.id,
+                        )
+                        await _asyncio.sleep(1 * (_attempt + 1))
+                    else:
+                        logger.exception(
+                            "confirm_booking_failed after 3 attempts conv=%s",
+                            ctx.conversation.id,
+                        )
+                        return json.dumps({"ok": False, "error": "booking failed"})
 
             # Apply `appointment_booked_sarah` tag so the GHL confirmation
             # workflow (which triggers on this tag, not on `customer_appointment`
