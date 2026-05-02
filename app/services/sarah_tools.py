@@ -89,10 +89,8 @@ class SarahToolRunner:
             return await self._search_obituary(ctx, args)
         if name == "escalate_to_staff":
             return await self._escalate(ctx, args)
-        if name == "resolve_postal_code":
-            return await self._resolve_postal_code(ctx, args)
-        if name == "resolve_area":
-            return await self._resolve_area(ctx, args)
+        # resolve_postal_code and resolve_area removed — location resolution
+        # is now model-driven via location_slug enum on check_calendar.
         if name == "switch_conversation_path":
             return await self._switch_path(ctx, args)
         if name == "continue_on_sms":
@@ -384,6 +382,27 @@ class SarahToolRunner:
         if dt < datetime.now(tz).date():
             dt = datetime.now(tz).date() + timedelta(days=1)
             date_str = dt.isoformat()
+
+        # ── Resolve location from model-provided slug ────────────────────────
+        location_slug = str(args.get("location_slug", "any")).strip().lower()
+        if location_slug and location_slug != "any":
+            from sqlalchemy import select as _sel
+            resolved = (
+                await ctx.db.execute(
+                    _sel(Location).where(
+                        Location.id == location_slug,
+                        Location.organization_id == ctx.organization.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if resolved is not None:
+                ctx.location = resolved
+                # Persist so book_appointment (next turn) picks up the same chapel.
+                ctx.conversation.location_id = resolved.id
+                logger.info(
+                    "check_calendar resolved location_slug=%s → %s conv=%s",
+                    location_slug, resolved.name, ctx.conversation.id,
+                )
 
         intent = self._intent_from_path(ctx)
         use_new_path = await self._typed_pool_active(ctx)

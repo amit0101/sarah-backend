@@ -88,8 +88,24 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
                         "type": "string",
                         "description": "IANA tz, default America/Edmonton",
                     },
+                    "location_slug": {
+                        "type": "string",
+                        "enum": [
+                            "park_memorial", "fish_creek", "deerfoot_south",
+                            "chapel_of_the_bells", "crowfoot", "eastside_memorial",
+                            "heritage", "calgary_crematorium", "airdrie", "cochrane",
+                            "any",
+                        ],
+                        "description": (
+                            "Chapel slug mapped from the visitor's community or "
+                            "neighbourhood. Use your knowledge of Calgary geography "
+                            "to pick the nearest chapel. For pre-need consultations "
+                            "pass 'any' (pre-planning specialists arrange their own "
+                            "meeting location)."
+                        ),
+                    },
                 },
-                "required": ["date", "timezone"],
+                "required": ["date", "timezone", "location_slug"],
                 "additionalProperties": False,
             },
         },
@@ -230,48 +246,8 @@ def sarah_tools(*, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
                 "additionalProperties": False,
             },
         },
-        {
-            "type": "function",
-            "name": "resolve_postal_code",
-            "strict": True,
-            "description": (
-                "Resolve a Canadian postal code to the nearest McInnis & Holloway chapel. "
-                "Call this when the visitor provides their postal code. Returns the nearest "
-                "chapel name and slug, or an error if the postal code is invalid."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "postal_code": {
-                        "type": "string",
-                        "description": "Canadian postal code, e.g. T2P 1A1",
-                    },
-                },
-                "required": ["postal_code"],
-                "additionalProperties": False,
-            },
-        },
-        {
-            "type": "function",
-            "name": "resolve_area",
-            "strict": True,
-            "description": (
-                "Resolve a Calgary area to the nearest McInnis & Holloway chapel when "
-                "postal code is unavailable or invalid. Use after the visitor chooses an area."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "area": {
-                        "type": "string",
-                        "enum": ["south_calgary", "north_calgary", "airdrie", "cochrane"],
-                        "description": "The area the visitor selected",
-                    },
-                },
-                "required": ["area"],
-                "additionalProperties": False,
-            },
-        },
+        # resolve_postal_code and resolve_area removed — location resolution
+        # is now model-driven via the location_slug enum on check_calendar.
         # Phase B — proactive SMS continuation
         # See PROMPT_AND_TOOL_CHANGES_2026-04-18.md §"Phase B — Proactive continuation tool"
         {
