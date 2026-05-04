@@ -48,6 +48,18 @@ class Settings(BaseSettings):
     ghl_api_base_url: str = "https://services.leadconnectorhq.com"
     ghl_api_version: str = "2021-07-28"
 
+    # GHL calendar IDs for Sarah-originated appointments. Today every
+    # location is mirrored onto the same two MHFH event calendars regardless
+    # of which physical chapel the booking is for; the per-location
+    # `sarah.locations.ghl_calendar_id` column is still consulted first so a
+    # future per-location split (one GHL calendar per chapel) drops in by
+    # populating that column. Until then, these env defaults win.
+    #
+    # Preplanning Calendar (pre-need flow) and Immediate Need Calendar
+    # (at-need flow) — defaults match MHFH GHL location S703WHSXhCWXaI0K86Cz.
+    ghl_calendar_id_preneed: str = "FV8WnbuvXxwCQH80ORsA"
+    ghl_calendar_id_atneed: str = "teaR5VhrF6SYinfEgj0w"
+
     # Twilio
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

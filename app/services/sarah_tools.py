@@ -10,6 +10,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.contact_manager.service import ContactService
 from app.contact_manager.validation import normalize_phone_ca_us
 import asyncio as _asyncio
@@ -300,6 +301,23 @@ class SarahToolRunner:
 
     # ─── Helpers shared by check / book / reschedule / cancel ────────────────
 
+    def _resolve_ghl_calendar_id(self, ctx: ToolContext, intent: str) -> Optional[str]:
+        """Pick the GHL calendar id Sarah-originated appointments are pushed to.
+
+        Today MHFH uses two location-wide event calendars (Preplanning vs
+        Immediate Need); per-chapel GHL calendars don't exist yet but the
+        plumbing is preserved for a future split. Resolution order:
+
+        1. At-need (intent != 'pre_need') → settings.ghl_calendar_id_atneed.
+           No per-location override today; add one when needed.
+        2. Pre-need → ctx.location.ghl_calendar_id if populated (future
+           per-chapel split), else settings.ghl_calendar_id_preneed.
+        """
+        s = get_settings()
+        if intent != "pre_need":
+            return s.ghl_calendar_id_atneed or None
+        return ctx.location.ghl_calendar_id or (s.ghl_calendar_id_preneed or None)
+
     def _intent_from_path(self, ctx: ToolContext) -> str:
         """Map Sarah's conversation path to the appointments-architecture intent."""
         path = (ctx.conversation.active_path or "").strip()
@@ -536,7 +554,7 @@ class SarahToolRunner:
                 primary_label=primary_cal.name,
             )
 
-            ghl_cal_id = ctx.location.ghl_calendar_id
+            ghl_cal_id = self._resolve_ghl_calendar_id(ctx, intent)
             ghl_loc = self._ghl_scope(ctx)
             ghl_contact_id = ctx.contact.ghl_contact_id
 
@@ -644,7 +662,7 @@ class SarahToolRunner:
             description=description,
         )
 
-        ghl_cal_id = ctx.location.ghl_calendar_id
+        ghl_cal_id = self._resolve_ghl_calendar_id(ctx, intent)
         ghl_loc = self._ghl_scope(ctx)
         cid = ctx.contact.ghl_contact_id
         ghl_appt_ok = False
