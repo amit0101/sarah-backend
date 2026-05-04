@@ -1,0 +1,438 @@
+{
+  "location": "park_memorial",
+  "runs": 5,
+  "max_tokens": 300,
+  "models": [
+    "openai:gpt-4.1",
+    "openai:gpt-4.1-mini"
+  ],
+  "scenarios": [
+    {
+      "name": "greeting",
+      "path": "general",
+      "user": "Hi, can you tell me a bit about what McInnis & Holloway offers?"
+    },
+    {
+      "name": "pricing",
+      "path": "general",
+      "user": "How much does a basic cremation cost?"
+    },
+    {
+      "name": "preplan",
+      "path": "pre_need",
+      "user": "I'd like to plan my own funeral arrangements ahead of time. Where do I start?"
+    },
+    {
+      "name": "immediate_need",
+      "path": "immediate_need",
+      "user": "My mother passed away last night. I need help arranging her funeral."
+    },
+    {
+      "name": "obituary",
+      "path": "obituary",
+      "user": "Do you have any recent obituaries for the Smith family?"
+    }
+  ],
+  "prompt_sizes": {
+    "general": 41553,
+    "pre_need": 44343,
+    "immediate_need": 42202,
+    "obituary": 39304
+  },
+  "summary": [
+    {
+      "model": "openai:gpt-4.1",
+      "avg_ms": 2585,
+      "med_ms": 1990,
+      "min_ms": 1007,
+      "max_ms": 5370,
+      "n_ok": 25,
+      "n_fail": 0
+    },
+    {
+      "model": "openai:gpt-4.1-mini",
+      "avg_ms": 1909,
+      "med_ms": 1378,
+      "min_ms": 817,
+      "max_ms": 9117,
+      "n_ok": 25,
+      "n_fail": 0
+    }
+  ],
+  "raw": {
+    "openai:gpt-4.1": {
+      "greeting": [
+        {
+          "ok": true,
+          "duration_ms": 3943,
+          "input_tokens": 9209,
+          "output_tokens": 162,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. We\u2019re a family-owned funeral home that\u2019s been serving Calgary and area since 1903, with ten locations across the city, Airdrie, and Cochrane. We offer a full range of funeral, cremation, celebration of life, and memorial services, as well as pre-planning support for those interested in arranging ahead.\n\nEvery family we serve also receives a tree planted in honour of their loved one through our Memorial Forest program. We\u2019re experienced supporting all faiths, cultures, and traditions, and can help with everything from traditional services to unique, personal memorials.\n\nIf there\u2019s something specific you\u2019re curious about, I\u2019m happy to share more or point you in the right direction. What would you like to know more about?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 2578,
+          "input_tokens": 9209,
+          "output_tokens": 152,
+          "reply": "Absolutely! I'm Sarah from McInnis & Holloway. We\u2019re a family-owned funeral home that\u2019s been serving Calgary and area families since 1903. We offer a full range of funeral and cremation services for all faiths and backgrounds, including traditional funerals, celebrations of life, direct cremation, graveside services, and pre-planning options.\n\nWe have 10 locations across Calgary, Airdrie, and Cochrane, so we can support families in whatever community they call home. Our team can help with everything from arranging services and obituaries to providing grief support and resources after the funeral.\n\nIf you have a specific type of service or need in mind, let me know\u2014I\u2019m happy to provide more details or answer any questions."
+        },
+        {
+          "ok": true,
+          "duration_ms": 3065,
+          "input_tokens": 9209,
+          "output_tokens": 143,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. We\u2019re a family-owned funeral home serving Calgary and area since 1903, with 10 locations including here at Park Memorial Chapel. We offer a full range of services to help families honour and remember their loved ones, including traditional funerals, cremation, celebrations of life, and pre-planning options.\n\nWe also support all faiths, cultures, and traditions, and can assist with everything from obituary notices to memorial products and personalized ceremonies. Every family we serve receives a memorial tree planted in their loved one\u2019s name at no additional cost through our Memorial Forest program.\n\nIs there a specific service or type of arrangement you\u2019d like to know more about?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 4176,
+          "input_tokens": 9209,
+          "output_tokens": 208,
+          "reply": "Absolutely, I\u2019d be happy to help.\n\nMcInnis & Holloway has been serving Calgary and area families since 1903, offering a full range of funeral, memorial, and celebration-of-life services. We are Calgary\u2019s longest-operating family-owned funeral home, and we have 10 locations across Calgary, Airdrie, and Cochrane.\n\nWe help families with:\n- Funeral and memorial services (including traditional, celebration of life, and religious/cultural services)\n- Cremation options and coordination\n- Graveside or burial arrangements\n- Pre-planning and pre-arrangement of services\n- Grief resources and support\n- Online obituaries and service information\n- Military and veteran honours, multicultural and Indigenous traditions\n\nWe also have a Memorial Forest program, where a tree is planted in memory of every person we serve.\n\nIf there\u2019s something specific you\u2019d like to know more about, just let me know. I\u2019m here to help with details, walk you through the process, or answer any questions you might have."
+        },
+        {
+          "ok": true,
+          "duration_ms": 3295,
+          "input_tokens": 9209,
+          "output_tokens": 182,
+          "reply": "Hi, I\u2019m Sarah from McInnis & Holloway. I\u2019d be honoured to share what we offer.\n\nMcInnis & Holloway is Calgary\u2019s longest-operating family-owned funeral home, serving families since 1903. We have 10 locations across Calgary, Airdrie, and Cochrane, and we support families with a full range of funeral, cremation, memorial, and pre-planning services.\n\nWe can help with everything from traditional funerals and burials to cremation, celebration of life gatherings, veteran and cultural ceremonies, and even green or eco-friendly options. We\u2019re here to guide families through every step, whether you\u2019re planning ahead or facing an immediate need.\n\nEvery family we serve also has a tree planted in their loved one\u2019s memory through our Memorial Forest program, at no additional cost.\n\nIs there a particular service or option you\u2019re interested in learning more about?"
+        }
+      ],
+      "pricing": [
+        {
+          "ok": true,
+          "duration_ms": 1860,
+          "input_tokens": 9200,
+          "output_tokens": 111,
+          "reply": "Thank you for your question. Pricing depends on quite a few choices, and I want to give you something accurate rather than just a rough guess. Our online estimator at **[estimatemhfh.com](https://estimatemhfh.com)** walks you through the options and provides a personalised estimate in just a few minutes \u2014 no obligation.\n\nIf you\u2019d prefer, I can also have one of our funeral directors call you with a detailed, written quote. Would you like someone to reach out, or does the estimator sound like a good place to start?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 3005,
+          "input_tokens": 9200,
+          "output_tokens": 155,
+          "reply": "Thank you for reaching out. Pricing for cremation depends on several choices, like the type of service, urn selection, and any additional arrangements your family might want. I want to give you the most accurate and personalized information, rather than a general number that might not reflect your actual needs.\n\nOur online estimator at **[estimatemhfh.com](https://www.estimatemhfh.com/)** is a helpful tool\u2014it walks you through the options and provides a personalized estimate based on your preferences, with no obligation. If you\u2019d rather speak with someone directly, I can also have one of our funeral directors call you with a written quote.\n\nDoes that help? Would you like the link to the estimator or to have someone give you a call to discuss your options?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 1638,
+          "input_tokens": 9200,
+          "output_tokens": 99,
+          "reply": "Thank you for asking. Pricing depends on quite a few choices and I want to give you something accurate rather than a guess. Our online estimator at **[estimatemhfh.com](https://estimatemhfh.com)** walks you through the options and gives you a personalised estimate in just a few minutes \u2014 there\u2019s no obligation. \n\nIf you\u2019d prefer, I can also have one of our funeral directors call you with a written quote. Would you like me to arrange that for you?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 1808,
+          "input_tokens": 9200,
+          "output_tokens": 97,
+          "reply": "Pricing depends on quite a few choices and I want to give you something accurate rather than just a general number. Our online estimator at **[estimatemhfh.com](https://estimatemhfh.com)** walks you through all your options and gives you a personalised estimate in just a few minutes\u2014there's no obligation. If you'd prefer, I can also have one of our funeral directors call you with a detailed, written quote. Would you like me to arrange that for you?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 2460,
+          "input_tokens": 9200,
+          "output_tokens": 153,
+          "reply": "Thank you for your question. Pricing for cremation really depends on a few personal choices\u2014such as where you\u2019d like the service, what kind of memorial you\u2019re considering, and any special wishes for your family. I want to give you information that\u2019s both accurate and tailored to your needs.\n\nThe best way to get a clear, detailed estimate is through our online estimator at **[estimatemhfh.com](https://estimatemhfh.com)**. It\u2019s easy to use, walks you through your options, and gives you a personalized estimate in just a few minutes\u2014no obligation.\n\nIf you\u2019d prefer to speak with someone, I can have one of our funeral directors reach out with a written quote. Would you like me to arrange that for you?"
+        }
+      ],
+      "preplan": [
+        {
+          "ok": true,
+          "duration_ms": 4730,
+          "input_tokens": 9790,
+          "output_tokens": 212,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. I'm glad you reached out \u2014 pre-planning is a thoughtful way to make things easier for your family. The process can feel a bit overwhelming, but I'm here to walk you through it step by step.\n\nTo start, most families consider:\n- Whether they prefer burial or cremation\n- The type of service or gathering they might want (funeral, memorial, celebration of life, etc.)\n- Specific wishes for ceremony, music, or cultural traditions\n\nYou can explore your options at your own pace, or, if you prefer, we offer a free Pre-Planning Guide that covers everything in detail. We also have an online estimator at [estimatemhfh.com](https://estimatemhfh.com) that helps you review service options and get a personalized estimate.\n\nWould you like me to send you our Pre-Planning Guide, or would you prefer to talk things through with one of our specialists? Just let me know what feels most comfortable for you, and we can go from there."
+        },
+        {
+          "ok": true,
+          "duration_ms": 5370,
+          "input_tokens": 9790,
+          "output_tokens": 283,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. I\u2019m glad you reached out\u2014pre-planning can give both peace of mind and clarity for you and your family. We help many people set out their wishes in advance, and you can be as detailed or flexible as you like.\n\nThere are a few key steps:\n1. **Explore your options**: You can choose between burial or cremation, select service types (traditional, celebration of life, private family gathering), and add any personal touches or special requests.\n2. **Consider prepaying** (optional): This can help lock in your choices and relieve future financial worry. All prepaid funds are protected by Alberta law and held in trust, with a 30-day cooling-off period and full transferability.\n3. **Record your wishes**: We keep your plan on file so it\u2019s ready when needed.\n\nIf you\u2019d like a step-by-step overview, I can send you our free Pre-Planning Guide\u2014it answers most questions and is easy to follow. Or, you can use our online estimator (estimatemhfh.com) to see what different arrangements might look like.\n\nWould you like the guide emailed to you, or would you prefer to book a time to meet with one of our funeral directors for a no-obligation consultation? Or if you\u2019d rather just ask questions here, I\u2019m happy to help with anything you need."
+        },
+        {
+          "ok": true,
+          "duration_ms": 3568,
+          "input_tokens": 9790,
+          "output_tokens": 220,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. Thank you for reaching out about planning ahead\u2014it\u2019s a thoughtful step that can really ease things for your family. \n\nThe process usually starts with some simple decisions:\n- Whether you\u2019d prefer burial or cremation\n- What kind of ceremony (if any) you\u2019d like\u2014religious, celebration of life, or something unique to you\n- Your wishes around cemetery or final resting place\n- Any personal touches that matter to you (photos, music, special readings, etc.)\n\nMany people start by exploring their options and costs. We have a free Pre-Planning Guide that walks you through all the decisions and helps you organize your wishes. There\u2019s also an online price estimator at [estimatemhfh.com](https://estimatemhfh.com) that lets you check costs and compare choices, with no obligation.\n\nWould you like the Pre-Planning Guide emailed to you, or would you prefer to talk to a funeral director in person? Let me know what feels right for you, or if you have specific questions about the process."
+        },
+        {
+          "ok": true,
+          "duration_ms": 4070,
+          "input_tokens": 9790,
+          "output_tokens": 174,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. I can absolutely help you with pre-planning your own funeral arrangements.\n\nThe best place to start is by learning about your options and thinking about the type of service you want\u2014whether that's a traditional burial, cremation, or something unique to you. We offer a free Pre-Planning Guide that walks you through every step, including choices for ceremonies, personal touches, and how to make your wishes known to your family.\n\nWould you like me to send you our free Pre-Planning Guide? It gives a clear overview of the process, and there\u2019s no pressure to decide anything right away. If you prefer to talk with someone, we can also set up a no-obligation consultation with one of our funeral directors.\n\nLet me know what works best for you, or if you have specific questions about the process!"
+        },
+        {
+          "ok": true,
+          "duration_ms": 3570,
+          "input_tokens": 9790,
+          "output_tokens": 163,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. Planning ahead is a thoughtful step, and I\u2019m here to help make it as clear and stress-free as possible.\n\nTo get started, most families begin by thinking about a few main choices:\n- Whether you\u2019d prefer burial or cremation\n- The kind of service or gathering that feels right for you (traditional, celebration of life, something simple, etc.)\n- Any personal touches or cultural traditions you\u2019d like included\n\nYou don\u2019t have to decide everything today. Many people find it helpful to review our free Pre-Planning Guide, which walks you through every step and helps you think about your wishes at your own pace.\n\nWould you like me to send you the guide by email, or is there a particular aspect you\u2019d like to talk about first?"
+        }
+      ],
+      "immediate_need": [
+        {
+          "ok": true,
+          "duration_ms": 1427,
+          "input_tokens": 9390,
+          "output_tokens": 66,
+          "reply": "I'm so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family during this difficult time.\n\nCould you tell me where your mother is right now? Whether she's at home, in hospital, a care facility, or hospice, we can help guide you through the next steps."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1453,
+          "input_tokens": 9390,
+          "output_tokens": 62,
+          "reply": "I\u2019m so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family.\n\nCould you tell me where your mother is right now? Whether she\u2019s at home, a hospital, care facility, or hospice, we can guide you on the next steps."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1696,
+          "input_tokens": 9390,
+          "output_tokens": 69,
+          "reply": "I\u2019m so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family during this incredibly difficult time.\n\nCould you tell me where your mother is right now? Whether she\u2019s at home, in hospital, a care facility, or hospice, I can help guide you through the next steps."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1725,
+          "input_tokens": 9390,
+          "output_tokens": 104,
+          "reply": "I'm so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family during this incredibly difficult time.\n\nCould you let me know where your mother is right now? Whether that's at home, a hospital, a care facility, or hospice, I can guide you on the next steps.\n\nSo we can have someone reach out to you right away, may I have your name and the best phone number to reach you? We'll only use this to contact you about your inquiry."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1701,
+          "input_tokens": 9390,
+          "output_tokens": 89,
+          "reply": "I'm so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family through this difficult time.\n\nCould you tell me where your mother is right now? Whether she\u2019s at home, a hospital, a care facility, or hospice, I can guide you on the next steps. \n\nWhen you\u2019re ready, I\u2019ll make sure a dedicated member of our team reaches out to you right away."
+        }
+      ],
+      "obituary": [
+        {
+          "ok": true,
+          "duration_ms": 1990,
+          "input_tokens": 8718,
+          "output_tokens": 38,
+          "reply": "I can help with that. Could you please provide the first name of the person in the Smith family you\u2019re looking for? That will help me find the most accurate tribute page for you."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1007,
+          "input_tokens": 8718,
+          "output_tokens": 37,
+          "reply": "I can help with that. Could you please provide the full name of the person in the Smith family you\u2019re looking for? That will help me find the right obituary or service details."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1534,
+          "input_tokens": 8718,
+          "output_tokens": 38,
+          "reply": "I can help with that. Could you please provide the first name of the person from the Smith family whose obituary you're looking for? This will help me find the most accurate information for you."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1438,
+          "input_tokens": 8718,
+          "output_tokens": 35,
+          "reply": "I can help with that. Could you please let me know the first name of the person in the Smith family you're looking for? That will help me find the correct obituary."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1536,
+          "input_tokens": 8718,
+          "output_tokens": 49,
+          "reply": "I can help with that. Could you please let me know the first name of the person in the Smith family you\u2019re looking for? If you have any details like their full name or approximate date of passing, that would help narrow the search."
+        }
+      ]
+    },
+    "openai:gpt-4.1-mini": {
+      "greeting": [
+        {
+          "ok": true,
+          "duration_ms": 2121,
+          "input_tokens": 9209,
+          "output_tokens": 164,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. I'd be glad to share some information about what we offer.\n\nWe provide a full range of funeral services to help families honour and remember their loved ones with care and respect. Our services include traditional funerals, cremation options, memorial services, graveside ceremonies, and pre-planning for those who want to prepare ahead.\n\nWe also assist with obituary publishing and help coordinate details like transportation, floral arrangements, and military honours for veterans. Additionally, every family we serve receives a tree planted in their loved one's memory through our Memorial Forest program.\n\nWe have 10 locations across Calgary, Airdrie, and Cochrane to serve families in many communities.\n\nDoes that help? I'd be happy to share more details on any of these or answer other questions you have."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1633,
+          "input_tokens": 9209,
+          "output_tokens": 118,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. I'd be happy to tell you about what we offer.\n\nWe provide a full range of funeral and memorial services to support families during difficult times. This includes traditional funerals, cremation services, pre-planning options to arrange in advance, and grief support. We have 10 locations across Calgary, Airdrie, and Cochrane, serving various communities with care and respect.\n\nIf you have questions about any specific service, or want to know about our process or locations, just let me know. Does that help so far?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 1383,
+          "input_tokens": 9209,
+          "output_tokens": 118,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. I\u2019d be happy to share what we offer.\n\nWe provide a full range of funeral and memorial services across our 10 locations in Calgary, Airdrie, and Cochrane. Whether you\u2019re looking for traditional funeral services, cremation, pre-planning options, or help with immediate arrangements, our team is here to support you every step of the way. We also offer special programs like planting a Memorial Forest tree in honour of your loved one.\n\nIs there a particular service or aspect you\u2019d like to know more about?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 1486,
+          "input_tokens": 9209,
+          "output_tokens": 130,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. I'd be glad to share what we offer.\n\nWe provide a full range of funeral and memorial services including traditional funerals, cremations, celebration of life events, and pre-planning options. Our goal is to support families with compassionate, personalized care through every step. We also help with things like obituary publishing, grief resources, and arranging military honors for veterans.\n\nWe have 10 funeral home locations across Calgary, Airdrie, and Cochrane to serve families close to home.\n\nDoes that help give you an overview? Let me know if you'd like more details on any particular service."
+        },
+        {
+          "ok": true,
+          "duration_ms": 2557,
+          "input_tokens": 9209,
+          "output_tokens": 158,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. I'd be glad to share some information about what we offer.\n\nMcInnis & Holloway has been serving families in Calgary, Airdrie, and Cochrane since 1903. As Calgary\u2019s longest-operating family-owned funeral home, we provide compassionate funeral and memorial services tailored to each family's needs. Our services include traditional funerals, cremation options, pre-planning to ease future arrangements, grief support, and coordination with various cultural and religious traditions.\n\nWe have 10 locations across the region to serve you conveniently, and our team is here 24/7 to help families in both immediate and planning situations.\n\nDoes that help? Let me know if you'd like more detail on any of our services or other information."
+        }
+      ],
+      "pricing": [
+        {
+          "ok": true,
+          "duration_ms": 1561,
+          "input_tokens": 9200,
+          "output_tokens": 107,
+          "reply": "I'm so sorry you're facing this difficult time. Regarding the cost of a basic cremation, pricing can vary quite a bit depending on the options you choose and your family's preferences.\n\nTo get an accurate and personalized estimate, I recommend using our online estimator at estimatemhfh.com. It walks you through the choices and provides a detailed quote with no obligation.\n\nIf you'd prefer, I can also arrange for one of our funeral directors to call you with a written quote and answer any questions. Would you like me to have someone reach out?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 1285,
+          "input_tokens": 9200,
+          "output_tokens": 100,
+          "reply": "I'm so sorry you're facing this difficult time. Pricing for cremation services can vary quite a bit based on the options you choose and specific family needs. To get the most accurate and personalised estimate, I recommend using our online estimator at estimatemhfh.com. It walks you through choices and provides a detailed quote with no obligation.\n\nIf you'd like, I can also have one of our funeral directors give you a call to discuss your options and answer any questions. Would you like me to arrange that?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 5389,
+          "input_tokens": 9200,
+          "output_tokens": 105,
+          "reply": "I'm sorry you're having to think about this right now. Pricing for cremation varies based on choices your family makes, so I want to be sure you get an accurate estimate rather than a guess.\n\nYou can visit our online estimator at estimatemhfh.com \u2014 it guides you through options and gives you a personalised quote in a few minutes, with no obligation.\n\nIf you'd like, I can also arrange for one of our funeral directors to call you with a detailed written quote. Would you like me to have someone reach out?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 1460,
+          "input_tokens": 9200,
+          "output_tokens": 121,
+          "reply": "I'm sorry for whatever you're going through right now. Regarding cremation costs, pricing depends on many factors and service choices specific to your family's wishes. To get an accurate estimate, I recommend trying our online estimator at estimatemhfh.com \u2014 it walks you through options and gives you a personalized, no-obligation quote in minutes.\n\nIf you'd prefer, I can have one of our funeral directors call you to discuss your needs and provide a detailed written quote. Would you like me to arrange that? If so, may I have your preferred phone number? We'll only use it to contact you about your inquiry."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1260,
+          "input_tokens": 9200,
+          "output_tokens": 93,
+          "reply": "I'm so sorry you're facing this difficult time. Regarding cremation costs, pricing can vary quite a bit depending on the choices your family makes. To give you the most accurate information, I recommend using our online estimator at estimatemhfh.com. It walks you through the options and provides a personalized estimate with no obligation.\n\nIf you'd like, I can also have one of our funeral directors call you with a detailed written quote. Would you like me to arrange that?"
+        }
+      ],
+      "preplan": [
+        {
+          "ok": true,
+          "duration_ms": 1944,
+          "input_tokens": 9790,
+          "output_tokens": 95,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. Planning ahead is a thoughtful way to ease the burden on your loved ones. A good place to start is by considering the type of service and any personal wishes you have. We offer a range of options including traditional funerals, cremation, and memorial services.\n\nWould you like me to send you our free Pre-Planning Guide? It walks you through the process step by step and can help you consider your choices."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1687,
+          "input_tokens": 9790,
+          "output_tokens": 92,
+          "reply": "Hi, I\u2019m Sarah from McInnis & Holloway. It\u2019s very thoughtful of you to plan ahead. \n\nA great place to start is by getting to know the options available and the process we follow. Would you like me to send you our free Pre-Planning Guide? It walks through everything step by step, helping you understand the choices you have. \n\nIf you have any questions about specific services or options right now, feel free to ask."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1339,
+          "input_tokens": 9790,
+          "output_tokens": 70,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. It's very thoughtful of you to consider planning ahead. A great way to start is by understanding the options available and what the process looks like.\n\nWould you like me to send you our free Pre-Planning Guide? It walks through the steps and choices you can make when planning your own arrangements."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1345,
+          "input_tokens": 9790,
+          "output_tokens": 106,
+          "reply": "Thank you for reaching out about planning ahead. Starting with pre-planning funeral arrangements is a thoughtful way to ease the burden on your loved ones.\n\nMany families begin by considering the type of service they prefer\u2014such as burial or cremation\u2014and the kind of ceremony they\u2019d like. It can also include selecting funeral home preferences, memorial options, and arranging financial details in advance.\n\nWould you like me to send you our free Pre-Planning Guide? It walks through the entire process step by step to help you understand your options clearly."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1247,
+          "input_tokens": 9790,
+          "output_tokens": 63,
+          "reply": "Hi, I'm Sarah from McInnis & Holloway. It's good that you're thinking ahead about your arrangements. To get started, I can provide information about the pre-planning process and options available.\n\nWould you like me to send you our free Pre-Planning Guide? It walks you through everything step by step."
+        }
+      ],
+      "immediate_need": [
+        {
+          "ok": true,
+          "duration_ms": 1378,
+          "input_tokens": 9390,
+          "output_tokens": 90,
+          "reply": "I'm so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family during this difficult time.\n\nCould you tell me where your mother is right now? Whether that's at home, hospital, care facility, or hospice, we can guide you on the next steps.\n\nAlso, so we can have someone reach out to you right away, may I have your name and the best number to reach you?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 1241,
+          "input_tokens": 9390,
+          "output_tokens": 89,
+          "reply": "I'm so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family during this difficult time.\n\nCould you tell me where your mother is right now? Whether that's at home, hospital, care facility, or hospice, we can guide you on the next steps.\n\nSo we can have someone reach out to you right away, may I have your name and the best phone number to reach you?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 1170,
+          "input_tokens": 9390,
+          "output_tokens": 59,
+          "reply": "I'm so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family.\n\nCould you tell me where your mother is right now? Whether that's at home, hospital, care facility, or hospice, we can guide you on the next steps."
+        },
+        {
+          "ok": true,
+          "duration_ms": 2009,
+          "input_tokens": 9390,
+          "output_tokens": 63,
+          "reply": "I'm so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family during this difficult time. Could you tell me where your mother is right now? Whether that's at home, hospital, care facility, or hospice, we can guide you on the next steps."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1024,
+          "input_tokens": 9390,
+          "output_tokens": 62,
+          "reply": "I am so deeply sorry for your loss. Please know that McInnis & Holloway is here to support you and your family.\n\nCould you tell me where your mother is right now? Whether that\u2019s at home, hospital, care facility, or hospice, we can gently guide you on the next steps."
+        }
+      ],
+      "obituary": [
+        {
+          "ok": true,
+          "duration_ms": 1334,
+          "input_tokens": 8718,
+          "output_tokens": 30,
+          "reply": "I can help with that. Could you please provide the full name of the person you are looking for? That will help me find the right obituary."
+        },
+        {
+          "ok": true,
+          "duration_ms": 1127,
+          "input_tokens": 8718,
+          "output_tokens": 25,
+          "reply": "I can help with that. Could you please provide the full name of the person from the Smith family you are looking for?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 9117,
+          "input_tokens": 8718,
+          "output_tokens": 36,
+          "reply": "I can help with that. Could you please provide me the full name of the person you're looking for from the Smith family? That will help me find the right obituary for you."
+        },
+        {
+          "ok": true,
+          "duration_ms": 834,
+          "input_tokens": 8718,
+          "output_tokens": 24,
+          "reply": "I can help with that. Could you please provide the full name of the person you're looking for in the Smith family?"
+        },
+        {
+          "ok": true,
+          "duration_ms": 817,
+          "input_tokens": 8718,
+          "output_tokens": 24,
+          "reply": "I can help with that. Could you please provide the full name of the person from the Smith family you're looking for?"
+        }
+      ]
+    }
+  }
+}

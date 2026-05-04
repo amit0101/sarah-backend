@@ -161,8 +161,21 @@ async def lookup_contact(
         raise
     if not data:
         return None
-    contact = data.get("contact") if isinstance(data, dict) else None
-    return contact if contact else data
+    # `/contacts/search/duplicate` always wraps the hit under `contact`
+    # and returns `{"contact": null, "traceId": "..."}` on no match. The
+    # whole response dict is truthy (it has `traceId`), so an earlier
+    # `return contact if contact else data` fallback caused callers to
+    # treat "no match" as "found an anonymous record", short-circuiting
+    # the create path in `ContactService.find_or_create` for every brand-
+    # new email (silent `RuntimeError("GHL did not return contact id")`,
+    # caught by the outer except in `_create_contact` → `ok=true,
+    # ghl_contact_id=null` → downstream tag/opportunity/booking calls
+    # all no-op'd with "no ghl contact"). Always return `None` when the
+    # wrapped contact is absent.
+    if not isinstance(data, dict):
+        return None
+    contact = data.get("contact")
+    return contact if contact else None
 
 
 async def add_contact_note(

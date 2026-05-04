@@ -98,6 +98,23 @@ class TestGHLContacts:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_lookup_contact_null_wrapper_returns_none(self, ghl):
+        """Regression (session 29, bug 11): `/contacts/search/duplicate`
+        returns 200 with `{"contact": null, "traceId": "..."}` when there
+        is no match. Earlier code fell through to `return data`, which is
+        truthy, causing `ContactService.find_or_create` to skip both the
+        update and create branches and raise `RuntimeError("GHL did not
+        return contact id")`. Must return `None` so the create path runs.
+        """
+        ghl.request = AsyncMock(
+            return_value={"contact": None, "traceId": "abc-123"}
+        )
+        result = await ghl_contacts.lookup_contact(
+            ghl, location_id="loc-123", email="nobody@example.com",
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_update_contact(self, ghl):
         ghl.request = AsyncMock(return_value={"contact": {"id": "c-123"}})
         await ghl_contacts.update_contact(

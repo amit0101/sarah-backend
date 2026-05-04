@@ -162,19 +162,6 @@ class SarahToolRunner:
             logger.error(
                 "GHL contact creation failed, saving locally: %s", e, exc_info=True,
             )
-            # TEMP diagnostic (session 29 bug 10): capture exception detail so it
-            # surfaces in sarah.openai_response_logs._tool_trace without needing
-            # Render log access. Remove once root cause is understood.
-            _diag_err = repr(e)
-            try:
-                from app.ghl_client.client import GHLAPIError as _GErr
-                if isinstance(e, _GErr):
-                    _diag_err = (
-                        f"GHLAPIError status={getattr(e, 'status_code', None)} "
-                        f"body={getattr(e, 'body', None)!r}"
-                    )
-            except Exception:
-                pass
             contact = ctx.contact
             if name:
                 contact.name = name
@@ -257,13 +244,25 @@ class SarahToolRunner:
                 "location_id": ctx.location.id,
             },
         )
-        resp: Dict[str, Any] = {"ok": True, "ghl_contact_id": ghl_id}
-        # TEMP diagnostic (session 29 bug 10): when GHL create failed,
-        # include the exception detail in the tool output so it lands in
-        # sarah.openai_response_logs._tool_trace for offline inspection.
-        if ghl_id is None and "_diag_err" in locals():
-            resp["_diag_ghl_create_error"] = _diag_err
-        return json.dumps(resp)
+        # Defense-in-depth: when the GHL push failed (ghl_id is None), the
+        # local Contact row is saved so we don't lose the name/email, but
+        # we must NOT claim success to the model — otherwise downstream
+        # tools in the same turn (apply_tag, create_opportunity,
+        # book_appointment) silently no-op with "no ghl contact" and the
+        # failure is invisible end-to-end. Surface as `ok=false` so the
+        # model either retries or escalates, and the traceback lands in
+        # Render logs via the `exc_info=True` on the logger above.
+        if ghl_id is None:
+            return json.dumps({
+                "ok": False,
+                "error": "ghl_create_failed",
+                "ghl_contact_id": None,
+                "message": (
+                    "Contact saved locally but GHL push failed. "
+                    "Try again on the next turn or escalate to staff."
+                ),
+            })
+        return json.dumps({"ok": True, "ghl_contact_id": ghl_id})
 
     async def _apply_tag(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
         key = str(args.get("tag_key", ""))
