@@ -14,7 +14,6 @@ from app.config import get_settings
 from app.contact_manager.service import ContactService
 from app.contact_manager.validation import normalize_phone_ca_us
 import asyncio as _asyncio
-from app.escalation.router import EscalationRouter
 from app.ghl_client import GHLClient
 from app.ghl_client import calendars as ghl_cal
 from app.ghl_client import contacts as ghl_contacts
@@ -894,31 +893,11 @@ class SarahToolRunner:
     async def _escalate(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
         reason = str(args.get("reason", ""))
         urgency = str(args.get("urgency", "normal"))
-        router = EscalationRouter()
-        contacts = ctx.location.escalation_contacts
-        result = router.route(
-            contacts if isinstance(contacts, list) else None,
-            urgency=urgency,
-            location_config=ctx.location.config,
-        )
-        body = (
-            f"Sarah escalation ({urgency}) at {ctx.location.name}: {reason}. "
-            f"Conversation: {ctx.conversation.id}"
-        )
-        # Use the router's channel recommendation + structured payload
-        notify_kwargs = dict(
-            to_phone=result.phone if result.channel == "sms" else result.phone,
-            to_email=result.email if result.channel == "email" else None,
-            body=body,
-            prefer_sms_if_business_hours=(result.channel == "sms"),
-            contact_name=ctx.contact.name,
-            contact_phone=ctx.contact.phone,
-            location_name=ctx.location.name,
-            conversation_id=str(ctx.conversation.id),
-            reason=reason,
-            urgency=urgency,
-        )
-        await ctx.notifications.notify_escalation(**notify_kwargs)
+        # NOTE: backend no longer sends staff notifications directly.
+        # Notification fan-out is handled exclusively by the V3 GHL workflow
+        # `Sarah Escalation Routing`, which fires when the `sarah_escalated`
+        # tag is applied below. Twilio in this backend is reserved for
+        # user-facing SMS chats; SMTP was never configured in production.
         ctx.conversation.mode = "staff"
 
         # Apply sarah_escalated tag to GHL contact → triggers Sarah Escalation
@@ -955,7 +934,6 @@ class SarahToolRunner:
                 "reason": reason,
                 "urgency": urgency,
                 "location_id": ctx.location.id,
-                "channel": result.channel,
                 "contact": {"ghl_contact_id": ctx.contact.ghl_contact_id},
             },
         )
