@@ -33,7 +33,12 @@ from app.obituary_client.client import TributeCenterClient
 from app.calendar_client.google_adapter import GoogleCalendarAdapter
 from app.services import calendar_service as cal_svc
 from app.services import ghl_push
-from app.services.location_config import get_pipeline_map, get_tag_map, resolve_tag_key
+from app.services.location_config import (
+    get_pipeline_map,
+    get_pipeline_stage_id,
+    get_tag_map,
+    resolve_tag_key,
+)
 from app.services.postal_code import resolve_area as _resolve_area
 from app.services.postal_code import resolve_postal_code as _resolve_postal_code
 from app.services.scheduling import build_availability_response, parse_counselor_from_event
@@ -191,7 +196,10 @@ class SarahToolRunner:
             pmap = get_pipeline_map(ctx.location.config)
             pipe_cfg = pmap.get(pipeline_key) or {}
             pipeline_id = pipe_cfg.get("pipeline_id")
-            stage_id = (pipe_cfg.get("stages") or {}).get("new_lead") or (pipe_cfg.get("stages") or {}).get("new")
+            stage_id = (
+                get_pipeline_stage_id(pipe_cfg, "new_lead")
+                or get_pipeline_stage_id(pipe_cfg, "new")
+            )
             if pipeline_id and stage_id:
                 try:
                     await ghl_pipes.create_opportunity(
@@ -248,7 +256,7 @@ class SarahToolRunner:
         sk = str(args.get("stage_key", ""))
         pipe = pmap.get(pk) or {}
         pipeline_id = pipe.get("pipeline_id")
-        stage_id = (pipe.get("stages") or {}).get(sk)
+        stage_id = get_pipeline_stage_id(pipe, sk)
         ghl_loc = self._ghl_scope(ctx)
         cid = ctx.contact.ghl_contact_id
         if not pipeline_id or not stage_id or not cid:
@@ -592,18 +600,10 @@ class SarahToolRunner:
                         )
                         return json.dumps({"ok": False, "error": "booking failed"})
 
-            # Apply `appointment_booked_sarah` tag so the GHL confirmation
-            # workflow (which triggers on this tag, not on `customer_appointment`
-            # — that trigger does not fire for API-created appointments where
-            # source="third_party") sends the confirmation email + SMS.
-            if ghl_contact_id:
-                try:
-                    await ghl_tags.add_tags(
-                        ctx.ghl, ghl_contact_id, location_id=ghl_loc,
-                        tags=["appointment_booked_sarah"],
-                    )
-                except Exception as e:
-                    logger.warning("Failed to apply appointment_booked_sarah tag: %s", e)
+            # The V3 'Sarah Origin Appointment Confirmation' workflow
+            # triggers on Appointment Status (calendar-id-filtered) and
+            # adds the `appointment_booked_sarah` tag itself as its first
+            # action — backend no longer pre-applies it.
 
             await ctx.dispatcher.emit(
                 "appointment.booked",
@@ -682,17 +682,10 @@ class SarahToolRunner:
             except Exception as e:
                 logger.warning("GHL appointment sync failed: %s", e)
 
-        # Apply `appointment_booked_sarah` tag to trigger the GHL confirmation
-        # workflow (tag-based trigger avoids the `customer_appointment` trigger
-        # not firing for API-created appointments — see typed-pool branch above).
-        if ghl_appt_ok and cid:
-            try:
-                await ghl_tags.add_tags(
-                    ctx.ghl, cid, location_id=ghl_loc,
-                    tags=["appointment_booked_sarah"],
-                )
-            except Exception as e:
-                logger.warning("Failed to apply appointment_booked_sarah tag: %s", e)
+        # V3 'Sarah Origin Appointment Confirmation' workflow tags the
+        # contact with `appointment_booked_sarah` as its first action when
+        # the calendar-id-filtered Appointment Status trigger fires. No
+        # pre-applied tag from the backend.
 
         # Write canonical sarah.appointments row so the booking surfaces
         # in the comms platform calendar page (and any future reports).
@@ -929,7 +922,9 @@ class SarahToolRunner:
         ctx.conversation.mode = "staff"
 
         # Apply sarah_escalated tag to GHL contact → triggers Sarah Escalation
-        # Alert (Enhanced) workflow in GHL.
+        # Alert (Enhanced) workflow in GHL. Also flip the `conversation_mode`
+        # custom field to "staff" so the V3 'Inbound Message → Sarah Router'
+        # workflow stops forwarding the contact's subsequent replies to Sarah.
         ghl_cid = ctx.contact.ghl_contact_id
         if ghl_cid:
             ghl_loc = self._ghl_scope(ctx)
@@ -941,6 +936,16 @@ class SarahToolRunner:
                 logger.info("Applied sarah_escalated tag to contact %s", ghl_cid)
             except Exception as e:
                 logger.warning("Failed to apply sarah_escalated tag: %s", e)
+            try:
+                await ghl_contacts.update_contact(
+                    ctx.ghl, ghl_cid, location_id=ghl_loc,
+                    customFields=[
+                        {"id": "MCbDtnYunljo58wxLxPt", "field_value": "staff"},
+                    ],
+                )
+                logger.info("Set conversation_mode=staff on contact %s", ghl_cid)
+            except Exception as e:
+                logger.warning("Failed to set conversation_mode=staff: %s", e)
 
         await ctx.dispatcher.emit(
             "escalation.triggered",
