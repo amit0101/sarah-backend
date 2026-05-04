@@ -159,7 +159,22 @@ class SarahToolRunner:
                 conversation_id=str(ctx.conversation.id),
             )
         except Exception as e:
-            logger.error("GHL contact creation failed, saving locally: %s", e)
+            logger.error(
+                "GHL contact creation failed, saving locally: %s", e, exc_info=True,
+            )
+            # TEMP diagnostic (session 29 bug 10): capture exception detail so it
+            # surfaces in sarah.openai_response_logs._tool_trace without needing
+            # Render log access. Remove once root cause is understood.
+            _diag_err = repr(e)
+            try:
+                from app.ghl_client.client import GHLAPIError as _GErr
+                if isinstance(e, _GErr):
+                    _diag_err = (
+                        f"GHLAPIError status={getattr(e, 'status_code', None)} "
+                        f"body={getattr(e, 'body', None)!r}"
+                    )
+            except Exception:
+                pass
             contact = ctx.contact
             if name:
                 contact.name = name
@@ -242,7 +257,13 @@ class SarahToolRunner:
                 "location_id": ctx.location.id,
             },
         )
-        return json.dumps({"ok": True, "ghl_contact_id": ghl_id})
+        resp: Dict[str, Any] = {"ok": True, "ghl_contact_id": ghl_id}
+        # TEMP diagnostic (session 29 bug 10): when GHL create failed,
+        # include the exception detail in the tool output so it lands in
+        # sarah.openai_response_logs._tool_trace for offline inspection.
+        if ghl_id is None and "_diag_err" in locals():
+            resp["_diag_ghl_create_error"] = _diag_err
+        return json.dumps(resp)
 
     async def _apply_tag(self, ctx: ToolContext, args: Dict[str, Any]) -> str:
         key = str(args.get("tag_key", ""))
