@@ -48,7 +48,58 @@ async def create_contact(
         body["source"] = source
     if assigned_to:
         body["assignedTo"] = assigned_to
-    return await client.request("POST", "/contacts/", location_id=location_id, json_body=body)
+    try:
+        return await client.request(
+            "POST", "/contacts/", location_id=location_id, json_body=body
+        )
+    except GHLAPIError as e:
+        # MHFH location (and any GHL location with "allow duplicate contacts"
+        # disabled) rejects a create that collides on email/phone with
+        # `400 "This location does not allow duplicated contacts"` and a
+        # `meta.contactId` pointing at the existing record. Previously this
+        # bubbled up through `find_or_create` and the outer `except` in
+        # `sarah_tools._create_contact` swallowed it, leaving `ghl_id = None`
+        # — so tags, custom fields, and the pipeline opportunity were all
+        # silently skipped.
+        #
+        # With the duplicate detected here, bring the existing contact up to
+        # date (custom fields, assignee, source, name) via `update_contact`
+        # and return the shape the caller expects so `body.get("contact",
+        # {}).get("id")` resolves to the real id. Tags are intentionally
+        # excluded from the update payload to avoid clobbering pre-existing
+        # tags — the caller re-applies Sarah's entry tags additively via
+        # `ghl_tags.add_tags` immediately after.
+        if e.status_code == 400 and isinstance(e.body, dict):
+            meta = e.body.get("meta") or {}
+            existing_id = meta.get("contactId")
+            if existing_id:
+                logger.info(
+                    "GHL create_contact hit duplicate location=%s existing_id=%s "
+                    "matching_field=%s — updating existing contact in place",
+                    location_id,
+                    existing_id,
+                    meta.get("matchingField"),
+                )
+                update_body = {
+                    k: v for k, v in body.items() if k not in ("locationId", "tags")
+                }
+                try:
+                    await update_contact(
+                        client,
+                        existing_id,
+                        location_id=location_id,
+                        **update_body,
+                    )
+                except GHLAPIError as upd_err:
+                    logger.error(
+                        "GHL update_contact after duplicate-detect failed "
+                        "existing_id=%s: %s",
+                        existing_id,
+                        upd_err,
+                        exc_info=True,
+                    )
+                return {"contact": {"id": existing_id}}
+        raise
 
 
 async def update_contact(

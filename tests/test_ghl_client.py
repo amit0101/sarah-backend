@@ -30,6 +30,60 @@ class TestGHLContacts:
         ghl.request.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_create_contact_duplicate_returns_existing(self, ghl):
+        """Regression: MHFH-style 400 'location does not allow duplicated contacts'
+        must not bubble up. The client should detect `meta.contactId`, update the
+        existing contact with the supplied fields, and return a contact-shaped
+        dict so `find_or_create` can populate `ghl_id` as usual."""
+        from app.ghl_client.client import GHLAPIError
+        dup_body = {
+            "statusCode": 400,
+            "message": "This location does not allow duplicated contacts.",
+            "meta": {
+                "contactId": "c-existing-999",
+                "matchingField": "email",
+                "contactName": "Jane Doe",
+            },
+        }
+        # 1st call (POST /contacts/) raises duplicate 400; 2nd call (PUT update) succeeds.
+        ghl.request = AsyncMock(
+            side_effect=[
+                GHLAPIError("GHL API error 400", status_code=400, body=dup_body),
+                {"contact": {"id": "c-existing-999"}},
+            ]
+        )
+        result = await ghl_contacts.create_contact(
+            ghl, location_id="loc-123",
+            first_name="Jane", last_name="Doe",
+            email="jane@example.com",
+            custom_fields=[{"id": "cf-1", "field_value": "webchat"}],
+        )
+        assert result == {"contact": {"id": "c-existing-999"}}
+        assert ghl.request.await_count == 2
+        # Second call must be the PUT update on the existing id, without `tags`
+        # (avoid clobbering pre-existing tags on the duplicate).
+        update_call = ghl.request.await_args_list[1]
+        assert update_call.args[0] == "PUT"
+        assert update_call.args[1] == "/contacts/c-existing-999"
+        assert "tags" not in (update_call.kwargs.get("json_body") or {})
+
+    @pytest.mark.asyncio
+    async def test_create_contact_non_duplicate_400_still_raises(self, ghl):
+        """A 400 without `meta.contactId` (e.g. validation error) must still raise."""
+        from app.ghl_client.client import GHLAPIError
+        ghl.request = AsyncMock(
+            side_effect=GHLAPIError(
+                "GHL API error 400",
+                status_code=400,
+                body={"statusCode": 400, "message": "name must be a string"},
+            )
+        )
+        with pytest.raises(GHLAPIError):
+            await ghl_contacts.create_contact(
+                ghl, location_id="loc-123", first_name="Jane",
+            )
+
+    @pytest.mark.asyncio
     async def test_lookup_contact_by_phone(self, ghl):
         ghl.request = AsyncMock(return_value={"contact": {"id": "c-found", "phone": "+1234"}})
         result = await ghl_contacts.lookup_contact(ghl, location_id="loc-123", phone="+1234")
