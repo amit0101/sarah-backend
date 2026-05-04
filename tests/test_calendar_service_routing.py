@@ -497,6 +497,42 @@ async def test_shared_primaries_calendar_does_not_self_poison_busy(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_at_need_honors_duration_minutes_90(monkeypatch, fake_org):
+    """Regression (session 29, bug 13): the MHFH Immediate Need GHL
+    calendar has three fixed 90-min windows per day (09:00–10:30, 12:15–
+    13:45, 15:00–16:30) with `slotDuration: 90`. A 60-min push (the
+    legacy default) is rejected with `400 "slot no longer available"`,
+    so Sarah must propose 90-min slots for at-need bookings. Verifies
+    every at-need slot's duration matches the requested 90 min.
+    """
+    venues = _make_venues("chapel_of_the_bells", "CH-1")
+    _patch_db_helpers(
+        monkeypatch,
+        venues_by_site={"chapel_of_the_bells": venues},
+    )
+    cal = FakeCalendarClient(roster_names=["Aaron B."])
+    slots = await cal_svc.propose_slots(
+        db=None,
+        calendar=cal,
+        organization=fake_org,
+        intent="at_need",
+        location_slug="chapel_of_the_bells",
+        target_date=date(2026, 5, 4),
+        duration_minutes=90,
+        booking_calendar_google_id=BOOKING_CAL_ID,
+    )
+    assert slots, "at-need flow must still propose slots at 90min duration"
+    for s in slots:
+        assert (s.ends_at - s.starts_at).total_seconds() == 90 * 60, (
+            f"at-need slot {s.starts_at.time()}→{s.ends_at.time()} is not 90 min"
+        )
+    starts = {s.starts_at.strftime("%H:%M") for s in slots}
+    assert starts.issubset({"09:00", "12:15", "15:00"}), (
+        f"at-need slots must start at 09:00/12:15/15:00 only, got {starts}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_returns_empty_when_no_booking_calendar(monkeypatch, fake_org):
     """Without a shared booking calendar id, the at-need flow returns []."""
     _patch_db_helpers(

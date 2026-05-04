@@ -474,6 +474,19 @@ class SarahToolRunner:
         if use_new_path:
             for _attempt in range(3):
                 try:
+                    # At-need bookings land on the MHFH Immediate Need GHL
+                    # calendar (`teaR5VhrF6SYinfEgj0w`), which has three
+                    # fixed 90-min windows per day (09:00–10:30, 12:15–
+                    # 13:45, 15:00–16:30) and `slotDuration: 90`. Proposing
+                    # a 60-min slot makes GHL reject the push with
+                    # `400 "slot no longer available"` — Google event gets
+                    # created (Google doesn't care about calendar slot
+                    # rules), but the GHL appointment never lands and the
+                    # Sarah Origin Appointment Confirmation workflow can't
+                    # fire. Pre-need keeps the legacy 60-min default; the
+                    # Preplanning Calendar accepts 60-min slots thanks to
+                    # `ignoreDateRange=true` (bug 9).
+                    duration_minutes = 90 if intent == "at_need" else 60
                     slots = await cal_svc.propose_slots(
                         db=ctx.db,
                         calendar=ctx.calendar,
@@ -482,6 +495,7 @@ class SarahToolRunner:
                         location_slug=ctx.location.id,
                         target_date=dt,
                         timezone=tz_name,
+                        duration_minutes=duration_minutes,
                         booking_calendar_google_id=booking_cal_id,
                     )
                     break  # success
