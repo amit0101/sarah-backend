@@ -171,6 +171,14 @@ class SarahToolRunner:
             await ctx.db.flush()
             ghl_id = None
         ctx.conversation.contact_id = contact.id
+        # Refresh the in-memory ctx.contact so subsequent tools in the same
+        # turn (apply_tag, book_appointment, etc.) see the canonical Contact
+        # row with `ghl_contact_id` populated. Without this, those tools
+        # would still hold the placeholder Contact built in
+        # ConversationService.process_user_message (no ghl_contact_id),
+        # causing silent failures like "no ghl contact" / GHL appointment
+        # push being skipped on the very turn the contact was created.
+        ctx.contact = contact
 
         # Section 5.2 — auto-apply entry tags and location tag after contact creation
         if ghl_id:
