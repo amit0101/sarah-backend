@@ -611,7 +611,10 @@ class SarahToolRunner:
             # The V3 'Sarah Origin Appointment Confirmation' workflow
             # triggers on Appointment Status (calendar-id-filtered) and
             # adds the `appointment_booked_sarah` tag itself as its first
-            # action — backend no longer pre-applies it.
+            # action — backend no longer pre-applies it. The GHL push is
+            # now reliable because `calendar_service._filter_future_slots`
+            # ensures Sarah never proposes a past same-day slot (which was
+            # the one edge case that GHL rightly rejected).
 
             await ctx.dispatcher.emit(
                 "appointment.booked",
@@ -675,6 +678,11 @@ class SarahToolRunner:
         cid = ctx.contact.ghl_contact_id
         ghl_appt_id: Optional[str] = None
         if ghl_cal_id and cid:
+            # Expected to succeed for every slot Sarah proposes now that
+            # `calendar_service._filter_future_slots` rejects past same-day
+            # candidates upstream. Any remaining rejection (slot conflict,
+            # auth, etc.) is logged at error with traceback so it surfaces
+            # in Render logs instead of being swallowed silently.
             try:
                 resp = await ghl_cal.create_appointment(
                     ctx.ghl,
@@ -688,13 +696,12 @@ class SarahToolRunner:
                 )
                 if isinstance(resp, dict):
                     ghl_appt_id = str(resp.get("id") or "") or None
-            except Exception as e:
-                logger.warning("GHL appointment sync failed: %s", e)
-
-        # V3 'Sarah Origin Appointment Confirmation' workflow tags the
-        # contact with `appointment_booked_sarah` as its first action when
-        # the calendar-id-filtered Appointment Status trigger fires. No
-        # pre-applied tag from the backend.
+            except Exception:
+                logger.error(
+                    "GHL appointment push failed conv=%s contact=%s "
+                    "calendar=%s start=%s",
+                    ctx.conversation.id, cid, ghl_cal_id, start, exc_info=True,
+                )
 
         # Write canonical sarah.appointments row so the booking surfaces
         # in the comms platform calendar page (and any future reports).

@@ -895,6 +895,28 @@ def _day_window(target: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
     return start, end
 
 
+# Minimum lead-time between "now" and a proposed slot start. Prevents Sarah
+# from suggesting same-day slots that have already passed (or are too close
+# to `now` for the customer to realistically attend). GHL's event calendar
+# will reject pushes for past times with `400 "The slot you have selected is
+# no longer available"`, and the broad fallback used to hide the error —
+# worse, Sarah would still tell the customer "you're booked" because the
+# Google event succeeded. Filtering here upstream makes both behaviours a
+# non-issue: we never propose a slot we couldn't actually honour.
+_MIN_SLOT_LEAD = timedelta(minutes=90)
+
+
+def _filter_future_slots(candidates: List[datetime], tz: ZoneInfo) -> List[datetime]:
+    """Drop candidate starts that are earlier than `now + _MIN_SLOT_LEAD`.
+
+    Applied to same-day windows by `_candidate_starts_for` and
+    `_generic_candidate_starts`. A future-day window is unaffected because
+    every candidate on that day is already > now + 90min by construction.
+    """
+    cutoff = datetime.now(tz) + _MIN_SLOT_LEAD
+    return [c for c in candidates if c >= cutoff]
+
+
 def _candidate_starts_for(
     location_slug: str, window_start: datetime, tz: ZoneInfo
 ) -> List[datetime]:
@@ -906,7 +928,7 @@ def _candidate_starts_for(
         except ValueError:
             continue
         out.append(window_start.replace(hour=hour, minute=minute, second=0, microsecond=0))
-    return out
+    return _filter_future_slots(out, tz)
 
 
 def _generic_candidate_starts(window_start: datetime, tz: ZoneInfo) -> List[datetime]:
@@ -914,7 +936,7 @@ def _generic_candidate_starts(window_start: datetime, tz: ZoneInfo) -> List[date
     out: List[datetime] = []
     for hour in range(9, 17):
         out.append(window_start.replace(hour=hour, minute=0, second=0, microsecond=0))
-    return out
+    return _filter_future_slots(out, tz)
 
 
 # ─── Display helpers ──────────────────────────────────────────────────────────
