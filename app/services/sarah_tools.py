@@ -201,12 +201,21 @@ class SarahToolRunner:
             )
             if pipeline_id and stage_id:
                 try:
+                    # GHL requires a non-empty `name` on opportunity create.
+                    # Use the contact name when known, else fall back to a
+                    # short pipeline-keyed default so the call still succeeds.
+                    opp_name = (
+                        (contact.name if contact and contact.name else None)
+                        or (name if name else None)
+                        or f"{pipeline_key.replace('_', '-').title()} lead"
+                    )
                     await ghl_pipes.create_opportunity(
                         ctx.ghl,
                         location_id=ghl_loc,
                         contact_id=ghl_id,
                         pipeline_id=pipeline_id,
                         pipeline_stage_id=stage_id,
+                        name=opp_name,
                     )
                     logger.info(
                         "Created %s pipeline opportunity for contact %s",
@@ -664,10 +673,10 @@ class SarahToolRunner:
         ghl_cal_id = self._resolve_ghl_calendar_id(ctx, intent)
         ghl_loc = self._ghl_scope(ctx)
         cid = ctx.contact.ghl_contact_id
-        ghl_appt_ok = False
+        ghl_appt_id: Optional[str] = None
         if ghl_cal_id and cid:
             try:
-                await ghl_cal.create_appointment(
+                resp = await ghl_cal.create_appointment(
                     ctx.ghl,
                     ghl_cal_id,
                     location_id=ghl_loc,
@@ -677,7 +686,8 @@ class SarahToolRunner:
                     title=summary,
                     notes=description,
                 )
-                ghl_appt_ok = True
+                if isinstance(resp, dict):
+                    ghl_appt_id = str(resp.get("id") or "") or None
             except Exception as e:
                 logger.warning("GHL appointment sync failed: %s", e)
 
@@ -709,6 +719,7 @@ class SarahToolRunner:
                 starts_at=start_dt,
                 ends_at=end_dt,
                 google_event_id=google_event_id,
+                ghl_appointment_id=ghl_appt_id,
                 status="scheduled",
                 created_by="sarah",
                 notes=notes,

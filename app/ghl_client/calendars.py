@@ -51,7 +51,13 @@ async def create_appointment(
     appointment_status: str = "confirmed",
     notes: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """POST /calendars/{calendarId}/appointments — ISO times per GHL."""
+    """POST /calendars/events/appointments — GHL API V2 (calendarId in body).
+
+    The earlier `POST /calendars/{calendarId}/appointments` form returns 404;
+    GHL canonical V2 puts the calendar id in the request body and uses a
+    fixed endpoint path under `/calendars/events/`. Verified manually against
+    the live GHL API on 2026-05-04.
+    """
     body: Dict[str, Any] = {
         "calendarId": calendar_id,
         "locationId": location_id,
@@ -67,7 +73,7 @@ async def create_appointment(
         body["notes"] = notes
     return await client.request(
         "POST",
-        f"/calendars/{calendar_id}/appointments",
+        "/calendars/events/appointments",
         location_id=location_id,
         json_body=body,
     )
@@ -83,7 +89,7 @@ async def update_appointment(
     body = {k: v for k, v in fields.items() if v is not None}
     return await client.request(
         "PUT",
-        f"/calendars/appointments/{appointment_id}",
+        f"/calendars/events/appointments/{appointment_id}",
         location_id=location_id,
         json_body=body,
     )
@@ -95,9 +101,9 @@ async def cancel_appointment(
     *,
     location_id: str,
 ) -> Dict[str, Any]:
-    """DELETE /calendars/appointments/{id} — cancel/remove appointment."""
+    """DELETE /calendars/events/appointments/{id} — cancel/remove appointment."""
     return await client.request(
         "DELETE",
-        f"/calendars/appointments/{appointment_id}",
+        f"/calendars/events/appointments/{appointment_id}",
         location_id=location_id,
     )
