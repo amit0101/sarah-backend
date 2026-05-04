@@ -141,6 +141,22 @@ class TestGHLCalendars:
             end_time="2026-04-10T11:00:00", title="Pre-Need Consultation",
         )
         ghl.request.assert_called_once()
+        # Default ignore_date_range=True so GHL accepts slots that Sarah
+        # validated against Google but which would otherwise be refused by
+        # the GHL calendar's `allowBookingAfter` lead-time rule.
+        body = ghl.request.call_args.kwargs["json_body"]
+        assert body["ignoreDateRange"] is True
+
+    @pytest.mark.asyncio
+    async def test_create_appointment_respects_explicit_ignore_flag(self, ghl):
+        ghl.request = AsyncMock(return_value={"id": "apt-123"})
+        await ghl_cals.create_appointment(
+            ghl, calendar_id="cal-1", location_id="loc-123",
+            contact_id="c-123", start_time="2026-04-10T10:00:00",
+            ignore_date_range=False,
+        )
+        body = ghl.request.call_args.kwargs["json_body"]
+        assert "ignoreDateRange" not in body
 
     @pytest.mark.asyncio
     async def test_cancel_appointment(self, ghl):

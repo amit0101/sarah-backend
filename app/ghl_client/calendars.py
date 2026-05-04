@@ -50,6 +50,7 @@ async def create_appointment(
     title: Optional[str] = None,
     appointment_status: str = "confirmed",
     notes: Optional[str] = None,
+    ignore_date_range: bool = True,
 ) -> Dict[str, Any]:
     """POST /calendars/events/appointments — GHL API V2 (calendarId in body).
 
@@ -57,6 +58,15 @@ async def create_appointment(
     GHL canonical V2 puts the calendar id in the request body and uses a
     fixed endpoint path under `/calendars/events/`. Verified manually against
     the live GHL API on 2026-05-04.
+
+    `ignore_date_range` defaults to True because Sarah owns slot validation
+    upstream (Google availability + `_filter_future_slots` lead buffer). The
+    GHL calendar's own `allowBookingAfter` / `slotDuration` / `slotInterval`
+    rules are tuned for the public booking widget and would otherwise refuse
+    pushes for slots Sarah has already promised to the customer (e.g.
+    Preplanning Calendar requires 2-day lead time → next-day bookings 400).
+    Past-time pushes are still rejected by GHL even with this flag set, which
+    is the desired safety net.
     """
     body: Dict[str, Any] = {
         "calendarId": calendar_id,
@@ -71,6 +81,8 @@ async def create_appointment(
         body["title"] = title
     if notes:
         body["notes"] = notes
+    if ignore_date_range:
+        body["ignoreDateRange"] = True
     return await client.request(
         "POST",
         "/calendars/events/appointments",
