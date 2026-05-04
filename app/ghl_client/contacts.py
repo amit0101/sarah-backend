@@ -87,15 +87,19 @@ async def lookup_contact(
     phone: Optional[str] = None,
     email: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
+    # GHL V2: lookup-by-attributes uses `/contacts/search/duplicate` with
+    # `number` (not `phone`) and `email`. The earlier `/contacts/lookup` path
+    # is interpreted by GHL as a contact-id route and returns 400. Verified
+    # against the live API on 2026-05-04.
     params: Dict[str, Any] = {"locationId": location_id}
     if phone:
-        params["phone"] = phone
+        params["number"] = phone
     if email:
         params["email"] = email
     try:
         data = await client.request(
             "GET",
-            "/contacts/lookup",
+            "/contacts/search/duplicate",
             location_id=location_id,
             params=params,
         )
