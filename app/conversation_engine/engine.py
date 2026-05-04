@@ -206,6 +206,7 @@ class ConversationEngine:
                 return text, resp.id
 
             outputs: List[Dict] = []
+            tool_trace: List[Dict[str, Any]] = []
             for call in calls:
                 if call.type != "function_call":
                     continue
@@ -217,6 +218,40 @@ class ConversationEngine:
                         "output": out,
                     }
                 )
+                # Persist each tool name + its raw output (truncated) so we
+                # can audit silent failures from sarah.openai_response_logs
+                # without needing Render logs. The SarahToolRunner also
+                # emits a structured log line but those are lossy in prod.
+                tool_trace.append(
+                    {
+                        "name": call.name,
+                        "call_id": call.call_id,
+                        "arguments": (call.arguments or "")[:2000],
+                        "output": (out or "")[:4000],
+                    }
+                )
+            # Stitch the tool trace onto the response we just persisted so
+            # later diagnostics can read it with a single SELECT.
+            if tool_trace and last_resp is not None:
+                try:
+                    from sqlalchemy import select
+                    from sqlalchemy.orm import attributes as _orm_attrs
+                    from app.models.openai_response_log import OpenAIResponseLog as _LogModel
+                    row = (
+                        await self._db.execute(
+                            select(_LogModel).where(
+                                _LogModel.openai_response_id == last_resp.id
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if row is not None:
+                        merged = dict(row.payload or {})
+                        merged["_tool_trace"] = tool_trace
+                        row.payload = merged
+                        _orm_attrs.flag_modified(row, "payload")
+                        await self._db.flush()
+                except Exception:
+                    logger.exception("Failed to stitch tool_trace into openai_response_logs")
             current_input = outputs
 
         if last_resp:
