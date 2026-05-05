@@ -583,6 +583,16 @@ class SarahToolRunner:
         intent = self._intent_from_path(ctx)
         service_type = self._service_type_from_appt_type(appointment_type, intent)
 
+        # Title used for both the GHL appointment-title custom field and the
+        # legacy-path Google event summary. Kept consistent across branches so
+        # the GHL workflow's `{{contact.appointment_title}}` token reads the
+        # same string regardless of which booking path executed.
+        location_name = ctx.location.name
+        title_parts = [appointment_type, "\u2014", f"{family_name} Family"]
+        if counselor_name:
+            title_parts.extend(["with", counselor_name])
+        appt_title = " ".join(title_parts)
+
         # Try the new typed-pool path: find a Primary calendar matching the
         # counselor name the model picked from check_calendar.
         primary_cal: Optional[Calendar] = None
@@ -658,6 +668,23 @@ class SarahToolRunner:
             # ensures Sarah never proposes a past same-day slot (which was
             # the one edge case that GHL rightly rejected).
 
+            # Option A — write 10 appointment custom fields + apply the
+            # `sarah_appointment_scheduled` tag. The two appointment-triggered
+            # GHL workflows key off this tag, NOT the GHL appointment object,
+            # so notifications fire reliably even if the GHL appointment push
+            # inside cal_svc.confirm_booking failed (e.g. Immediate Need
+            # calendar capacity exhausted). Best-effort.
+            await self._post_book_ghl_sync(
+                ctx,
+                intent=intent,
+                starts_at=appt.starts_at,
+                ends_at=appt.ends_at,
+                title=appt_title,
+                location_name=location_name,
+                counselor_name=counselor_name,
+                notes=notes,
+            )
+
             await ctx.dispatcher.emit(
                 "appointment.booked",
                 {
@@ -689,12 +716,9 @@ class SarahToolRunner:
         if not cal_id:
             return json.dumps({"ok": False, "error": "no calendar_id"})
 
-        location_name = ctx.location.name
-        summary_parts = [appointment_type, "—", f"{family_name} Family"]
-        if counselor_name:
-            summary_parts.extend(["with", counselor_name])
-        summary_parts.extend(["at", location_name])
-        summary = " ".join(summary_parts)
+        # Google event summary mirrors the GHL custom-field title but appends
+        # "at <location_name>" so the calendar event makes sense in isolation.
+        summary = f"{appt_title} at {location_name}"
 
         desc_lines = [
             f"Appointment Type: {appointment_type}",
@@ -777,6 +801,21 @@ class SarahToolRunner:
             await ctx.db.flush()
             appt_id = appt.id
 
+        # Option A — same post-book sync as the typed-pool branch. Runs even
+        # when ghl_appt_id is None (e.g. GHL slot conflict) so the Sarah
+        # workflows still fire on the tag.
+        if start_dt and end_dt:
+            await self._post_book_ghl_sync(
+                ctx,
+                intent=intent,
+                starts_at=start_dt,
+                ends_at=end_dt,
+                title=appt_title,
+                location_name=location_name,
+                counselor_name=counselor_name,
+                notes=notes,
+            )
+
         await ctx.dispatcher.emit(
             "appointment.booked",
             {
@@ -795,6 +834,108 @@ class SarahToolRunner:
         return json.dumps({"ok": True, "event": ev, "appointment_id": str(appt_id) if appt_id else None, "legacy_path": True})
 
     # ─── GHL push wrappers (thin delegations to app.services.ghl_push) ───────
+
+    async def _post_book_ghl_sync(
+        self,
+        ctx: ToolContext,
+        *,
+        intent: str,
+        starts_at: "datetime",
+        ends_at: "datetime",
+        title: str,
+        location_name: str,
+        counselor_name: Optional[str],
+        notes: Optional[str],
+    ) -> None:
+        """Option A — populate appointment custom fields + apply trigger tag.
+
+        After every successful booking (Google event + sarah.appointments row),
+        write the 10 ``contact.appointment_*`` GHL custom fields and add the
+        ``sarah_appointment_scheduled`` tag to the GHL contact. The two V3
+        appointment workflows (`Sarah Origin Appointment Confirmation` and
+        `Sarah Source Channel 24h SMS Reminder`) trigger off the tag and read
+        their email/SMS merge tokens from these custom fields.
+
+        Failures are logged with ``exc_info=True`` and never raised \u2014 the
+        booking has already been materialised in Google + Postgres and the
+        user-facing \u201cyou're booked\u201d message must remain truthful.
+        """
+        cid = ctx.contact.ghl_contact_id
+        if not cid:
+            logger.info(
+                "post_book_ghl_sync_skipped reason=no_ghl_contact_id conv=%s",
+                ctx.conversation.id,
+            )
+            return
+        ghl_loc = self._ghl_scope(ctx)
+        cfg = ctx.location.config or {}
+        field_ids: Dict[str, Any] = (cfg.get("appointment_custom_fields") or {})
+
+        cf_payload: list[Dict[str, Any]] = []
+
+        def _add(logical_key: str, value: Any) -> None:
+            fid = field_ids.get(logical_key)
+            if fid and value not in (None, ""):
+                cf_payload.append({"id": str(fid), "field_value": str(value)})
+
+        _add("starts_at", starts_at.isoformat())
+        _add("ends_at", ends_at.isoformat())
+        _add("title", title)
+        _add("location", location_name)
+        _add("host", counselor_name)
+        _add("intent", intent)
+        _add("notes", notes)
+        _add("conversation_id", str(ctx.conversation.id))
+        # `reschedule_link` / `cancel_link` are reserved for future use
+        # (Sarah-hosted self-service URLs); do not populate yet.
+
+        if cf_payload:
+            try:
+                await ghl_contacts.update_contact(
+                    ctx.ghl,
+                    cid,
+                    location_id=ghl_loc,
+                    customFields=cf_payload,
+                )
+                logger.info(
+                    "appointment_custom_fields_written conv=%s n=%d",
+                    ctx.conversation.id,
+                    len(cf_payload),
+                )
+            except Exception:
+                logger.error(
+                    "appointment_custom_fields_write_failed conv=%s contact=%s",
+                    ctx.conversation.id,
+                    cid,
+                    exc_info=True,
+                )
+        else:
+            logger.warning(
+                "appointment_custom_fields_not_configured location=%s \u2014 "
+                "the Sarah Origin Appointment Confirmation workflow will "
+                "fire on the tag but its merge tokens will be empty",
+                ctx.location.id,
+            )
+
+        try:
+            await ghl_tags.add_tags(
+                ctx.ghl,
+                cid,
+                location_id=ghl_loc,
+                tags=["sarah_appointment_scheduled"],
+            )
+            logger.info(
+                "sarah_appointment_scheduled_tag_applied conv=%s contact=%s",
+                ctx.conversation.id,
+                cid,
+            )
+        except Exception:
+            logger.error(
+                "sarah_appointment_scheduled_tag_apply_failed conv=%s contact=%s",
+                ctx.conversation.id,
+                cid,
+                exc_info=True,
+            )
 
     def _make_ghl_create_push(
         self,
